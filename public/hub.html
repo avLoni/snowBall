@@ -286,7 +286,7 @@
 //  Add a new experiment here and it appears on the page.
 //  Bump BUILD whenever you deploy, so Safari fetches fresh files.
 // ═══════════════════════════════════════════════════════════
-const BUILD = 5;
+const BUILD = 6;
 
 const EXPERIENCES = [
   {
@@ -304,6 +304,13 @@ const EXPERIENCES = [
     glyph: 'phone',
     mono: true,
     noXR: true          // the one entry that works without WebXR
+  },
+  {
+    file: 'throw-lab.html',
+    title: 'Throw Lab',
+    line: 'Instrumentation, not a game. Records every frame of both hands in head-relative coordinates — including the moment the headset loses them mid-throw — to find out whether a release can be reconstructed from the wind-up.',
+    chips: ['immersive', 'hand tracking', 'diagnostic'],
+    glyph: 'hand'
   },
   {
     file: 'hands.html',

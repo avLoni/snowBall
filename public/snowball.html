@@ -215,6 +215,20 @@ const CFG = {
   envMinRange:   0.015,
 
   pitchAtNeutral:0.30,
+  // How much of the vertical aim comes from where the head is pointing.
+  // 0 restores hands-only; 1 makes the hands a pure trim wheel. Two thirds
+  // keeps the gesture meaningful while borrowing the head's steadiness.
+  // Tunable from the URL while you are standing in the snow:
+  //   ?gaze=0     hands only, exactly as before
+  //   ?gaze=0.66  the default blend
+  //   ?gaze=1     the head aims, the hands trim
+  gazeMix:       (() => {
+    const v = parseFloat(new URLSearchParams(location.search).get('gaze'));
+    return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.66;
+  })(),
+  gazeGain:      1.15,   // barrel radians per radian of head pitch
+  handTrim:      0.55,   // how far the hands can push either side of that
+
   // Negative means below the horizon. It used to stop at +0.05 rad, three
   // degrees ABOVE level, so the barrel could never be brought down onto
   // the gingerbread however far the hands dropped.
@@ -3192,13 +3206,41 @@ function aimCannon() {
     const alturaOlhos = Math.max(camPos.y, 0.6);
     const f = handAvg.y / alturaOlhos;          // 0.52 hips … 0.95 eyes
 
+    // Hands alone: the full range, as before.
+    let porMaos;
     if (f >= MAO_NEUTRA) {
       const k = Math.min((f - MAO_NEUTRA) / (MAO_CIMA - MAO_NEUTRA), 1);
-      pitchTarget = CFG.pitchAtNeutral + k * (CFG.pitchMax - CFG.pitchAtNeutral);
+      porMaos = CFG.pitchAtNeutral + k * (CFG.pitchMax - CFG.pitchAtNeutral);
     } else {
       const k = Math.min((MAO_NEUTRA - f) / (MAO_NEUTRA - MAO_BAIXO), 1);
-      pitchTarget = CFG.pitchAtNeutral - k * (CFG.pitchAtNeutral - CFG.pitchMin);
+      porMaos = CFG.pitchAtNeutral - k * (CFG.pitchAtNeutral - CFG.pitchMin);
     }
+
+    // ── LOOK, THEN TRIM ──────────────────────────────────────
+    // The steadiest thing this headset knows is where it is pointing:
+    // that is measured by the device tracking itself, not by cameras
+    // hunting for fingers, and it never jitters. The hands are the part
+    // that shakes. So the head sets the coarse aim and the hands trim it.
+    //
+    // Head pitch, not eye gaze — Safari does not expose where the eyes
+    // are looking, and it is right not to.
+    const olhar = new THREE.Euler().setFromQuaternion(camQuat, 'YXZ').x;
+
+    // A guard that matters: looking UP at the scoreboard must not throw the
+    // aim at the sky. Only the downward half of head movement is trusted,
+    // which is also the half a player uses to look at the field.
+    const olharUtil = THREE.MathUtils.clamp(olhar, -0.55, 0.12);
+    const porOlhar = THREE.MathUtils.clamp(
+      CFG.pitchAtNeutral - olharUtil * CFG.gazeGain, CFG.pitchMin, CFG.pitchMax);
+
+    // The hands become an offset around whatever the head is pointing at,
+    // rather than the whole answer.
+    const trim = (porMaos - CFG.pitchAtNeutral) * CFG.handTrim;
+    const alvoMisto = THREE.MathUtils.clamp(porOlhar + trim, CFG.pitchMin, CFG.pitchMax);
+
+    pitchTarget = CFG.gazeMix > 0
+      ? porMaos * (1 - CFG.gazeMix) + alvoMisto * CFG.gazeMix
+      : porMaos;
 
     // The sideways anchor is still sampled: yaw never misbehaved, and
     // there is no head-relative equivalent for "straight ahead".
@@ -3399,7 +3441,7 @@ function buildDiag() {
       `[${(slot.envLo * 1000).toFixed(0)}–${(slot.envHi * 1000).toFixed(0)}]`);
   }
   const f = handAvg.y / Math.max(camPos.y, 0.6);
-  diagLine = `${aimMode}  ${diagCorpo}  mão ${f.toFixed(2)}  ` +
+  diagLine = `${aimMode}  olhar ${(CFG.gazeMix * 100) | 0}%  ${diagCorpo}  mão ${f.toFixed(2)}  ` +
              `${parts.join('  ') || 'sem mãos'}  ${link}`;
 }
 

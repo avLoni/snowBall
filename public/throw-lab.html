@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Laboratório de Arremesso</title>
+<style>
+  :root {
+    --void:#070a12; --sup:#10151f; --linha:#1e2637;
+    --neve:#eef3ff; --dim:#7d879e; --fraco:#4a5468;
+    --feixe:#5b8cff; --brasa:#ffb45c; --bom:#5ce39a; --mau:#e2564f;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:0 22px 80px; background:var(--void); color:var(--neve);
+    font:16px/1.55 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  .wrap { max-width:720px; margin:0 auto; }
+  header { padding:56px 0 26px; }
+  .olho { font-family:var(--mono); font-size:12px; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--fraco); margin:0 0 14px; }
+  h1 { font-size:clamp(34px,9vw,52px); font-weight:800; letter-spacing:-.035em;
+    line-height:1; margin:0 0 16px; }
+  h1 em { font-style:normal; color:var(--feixe); }
+  p.lead { color:var(--dim); max-width:52ch; margin:0 0 8px; }
+
+  .cartao { background:var(--sup); border:1px solid var(--linha); border-radius:16px;
+    padding:20px; margin:18px 0; }
+  .cartao h2 { font-size:18px; margin:0 0 10px; }
+  .cartao p { color:var(--dim); font-size:15px; margin:0 0 10px; }
+  ol { color:var(--dim); font-size:15px; padding-left:20px; margin:0; }
+  ol li { margin-bottom:7px; }
+  ol strong { color:var(--neve); }
+
+  button { font:inherit; font-weight:650; border:none; border-radius:11px;
+    padding:15px 22px; cursor:pointer; background:var(--feixe); color:#06101f; }
+  button:disabled { opacity:.4; cursor:default; }
+  button.sec { background:#26324a; color:var(--neve); font-size:15px; padding:12px 17px; }
+  .linhaBt { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  #estado { color:var(--dim); font-size:14px; margin-top:12px; min-height:20px; }
+
+  textarea { width:100%; height:190px; background:#0a0f1a; color:var(--dim);
+    border:1px solid var(--linha); border-radius:11px; padding:12px;
+    font-family:var(--mono); font-size:11px; resize:vertical; }
+  .num { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:12px; }
+  .num div { text-align:center; }
+  .num .v { font-size:26px; font-weight:750; }
+  .num .r { font-size:11px; color:var(--fraco); text-transform:uppercase; letter-spacing:.6px; }
+  code { background:rgba(255,255,255,.07); padding:2px 7px; border-radius:5px;
+    font-family:var(--mono); font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="olho">Vision Pro · WebXR · instrumentação</p>
+    <h1>Laboratório de<br><em>Arremesso</em></h1>
+    <p class="lead">Não é um jogo. Grava tudo o que as mãos fazem — incluindo o que
+      acontece quando o visor as perde de vista — para percebermos se um arremesso
+      pode ser reconstruído a partir do balanço.</p>
+  </header>
+
+  <div class="cartao">
+    <h2>Como correr a sessão</h2>
+    <ol>
+      <li>Põe os óculos e entra.</li>
+      <li>Faz <strong>dez arremessos por cima do ombro</strong>, como se atirasses uma bola
+        de neve a sério: recua a mão, e lança.</li>
+      <li>Varia a força: uns <strong>fracos</strong>, uns <strong>médios</strong>, uns
+        <strong>com tudo</strong>. É a variação que revela o padrão.</li>
+      <li>Faz também <strong>três movimentos falsos</strong> — recuar a mão e não atirar.
+        Precisamos de saber distinguir.</li>
+      <li><strong>Sai da sessão.</strong> A gravação é enviada para o servidor sozinha.</li>
+      <li>No computador, abre <code id="endLogs">/logs</code> e descarrega o ficheiro.</li>
+    </ol>
+  </div>
+
+  <div class="cartao">
+    <div class="linhaBt">
+      <button id="entrar" disabled>A verificar o dispositivo…</button>
+      <button id="limpar" class="sec" type="button">Limpar registo</button>
+    </div>
+    <div id="estado"></div>
+  </div>
+
+  <div class="cartao">
+    <h2>Registo</h2>
+    <div class="num">
+      <div><div class="v" id="nAmostras">0</div><div class="r">amostras</div></div>
+      <div><div class="v" id="nLances">0</div><div class="r">lances vistos</div></div>
+      <div><div class="v" id="nPerdas">0</div><div class="r">perdas de mão</div></div>
+      <div><div class="v" id="nSeg">0</div><div class="r">segundos</div></div>
+    </div>
+  </div>
+
+  <div class="cartao">
+    <h2>Dados</h2>
+    <p>Uma linha por amostra, a 90 por segundo. Copia e envia-me isto.</p>
+    <div class="linhaBt" style="margin-bottom:12px">
+      <button id="copiar" class="sec" type="button">Copiar tudo</button>
+      <button id="enviar" class="sec" type="button">Enviar para o servidor</button>
+    </div>
+    <textarea id="saida" readonly placeholder="ainda sem dados"></textarea>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ═══════════════════════════════════════════════════════════
+//  THROW LAB
+//
+//  The question this exists to answer: when the headset loses a hand
+//  behind the head mid-throw, is there enough in the wind-up to
+//  reconstruct the release it never saw?
+//
+//  So it records everything, at full rate, in head-relative coordinates —
+//  because what matters is where the hand is relative to the FACE, not to
+//  the room. It marks the moments that matter (wind-up, loss, return) and
+//  leaves the judgement to the data.
+// ═══════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+const entrarBt = $('entrar'), estadoEl = $('estado');
+$('endLogs').textContent = location.origin + '/logs';
+
+let xrOk = false;
+if (!navigator.xr) {
+  estadoEl.textContent = 'Sem WebXR. Abre esta página no Safari do Vision Pro.';
+} else {
+  navigator.xr.isSessionSupported('immersive-vr').then(ok => {
+    xrOk = ok;
+    entrarBt.disabled = !ok;
+    entrarBt.textContent = ok ? 'Entrar no laboratório' : 'Sessões imersivas indisponíveis';
+  });
+}
+
+const cena = new THREE.Scene();
+cena.background = new THREE.Color(0x0a0f1a);
+const camara = new THREE.PerspectiveCamera(70, 1, 0.02, 60);
+const render = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+render.setPixelRatio(window.devicePixelRatio);
+render.xr.enabled = true;
+document.body.appendChild(render.domElement);
+
+cena.add(new THREE.HemisphereLight(0xbfd4ff, 0x2a3550, 2.0));
+
+// A grid to stand on, so the space reads as a place rather than a void.
+{
+  const g = new THREE.GridHelper(8, 16, 0x2a3a5c, 0x18243a);
+  cena.add(g);
+}
+
+// ── the hands ─────────────────────────────────────────────
+const geoJunta = new THREE.SphereGeometry(0.008, 8, 6);
+const matJunta = new THREE.MeshBasicMaterial({ color: 0x8fb2ff });
+const matPulso = new THREE.MeshBasicMaterial({ color: 0xffb45c });
+
+const maos = [];
+for (let i = 0; i < 2; i++) {
+  const mao = render.xr.getHand(i);
+  cena.add(mao);
+  maos.push({
+    mao, idx: i,
+    esferas: new Map(),
+    activa: false,
+    pos: new THREE.Vector3(),        // wrist, world
+    rel: new THREE.Vector3(),        // wrist, head-relative
+    vel: new THREE.Vector3(),
+    posAnt: new THREE.Vector3(),
+    temAnt: false,
+    estado: 'parada',
+    tParado: 0,
+    // wind-up bookkeeping
+    recuoInicio: 0, recuoPico: 0, recuoDist: 0,
+    relNoRecuo: new THREE.Vector3(),
+    perdidaEm: 0, relAoPerder: new THREE.Vector3(), velAoPerder: new THREE.Vector3(),
+    lances: 0
+  });
+}
+
+// Trail of the wrist, so the shape of a throw is visible in the room.
+const RASTO = 90;
+const rastoGeo = new THREE.BufferGeometry();
+rastoGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(RASTO * 3), 3));
+const rasto = new THREE.Line(rastoGeo, new THREE.LineBasicMaterial({ color: 0x5ce39a }));
+rasto.frustumCulled = false;
+cena.add(rasto);
+let rastoN = 0;
+
+// ── the readout that floats in front of you ───────────────
+function fazerPainel(l, a, pxL, pxA) {
+  const cv = document.createElement('canvas');
+  cv.width = pxL; cv.height = pxA;
+  const ctx = cv.getContext('2d');
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const malha = new THREE.Mesh(new THREE.PlaneGeometry(l, a),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+  cena.add(malha);
+  return { ctx, tex, malha, pxL, pxA };
+}
+const painel = fazerPainel(1.1, 0.62, 1100, 620);
+
+function desenharPainel() {
+  const { ctx, tex, pxL, pxA } = painel;
+  ctx.clearRect(0, 0, pxL, pxA);
+  ctx.fillStyle = 'rgba(10,16,28,0.9)';
+  ctx.beginPath(); ctx.roundRect(0, 0, pxL, pxA, 26); ctx.fill();
+  ctx.strokeStyle = '#2a3a5c'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.roundRect(4, 4, pxL - 8, pxA - 8, 23); ctx.stroke();
+
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillStyle = '#7d879e';
+  ctx.font = '26px ui-monospace, Menlo, monospace';
+  ctx.fillText('LABORATÓRIO DE ARREMESSO', 34, 30);
+
+  ctx.font = 'bold 62px -apple-system, system-ui, sans-serif';
+  ctx.fillStyle = '#eef3ff';
+  ctx.fillText(`${lances} lances`, 34, 70);
+
+  ctx.font = '30px ui-monospace, Menlo, monospace';
+  let y = 168;
+  for (const m of maos) {
+    const cor = m.estado === 'recuo' ? '#ffb45c'
+              : m.estado === 'perdida' ? '#e2564f'
+              : m.estado === 'lancada' ? '#5ce39a' : '#4a5468';
+    ctx.fillStyle = cor;
+    const v = m.vel.length().toFixed(2);
+    ctx.fillText(`mão ${m.idx}  ${m.estado.padEnd(9)} ${m.activa ? '' : '(sem sinal)'}`, 34, y);
+    y += 40;
+    ctx.fillStyle = '#4a5468';
+    ctx.fillText(`   vel ${v} m/s   recuo ${(m.recuoDist * 100).toFixed(0)} cm`, 34, y);
+    y += 52;
+  }
+
+  ctx.fillStyle = '#7d879e';
+  ctx.font = '26px ui-monospace, Menlo, monospace';
+  ctx.fillText(`${amostras.length} amostras · ${perdas} perdas`, 34, pxA - 96);
+  ctx.fillStyle = '#5ce39a';
+  ctx.fillText('sai da sessão para guardar', 34, pxA - 56);
+
+  tex.needsUpdate = true;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  RECORDING
+//  Head-relative is the whole point: a throw is the same throw whether
+//  the player is facing the window or the door, and the region where the
+//  hand vanishes is fixed relative to the face, not to the room.
+// ═══════════════════════════════════════════════════════════
+const amostras = [];
+const MAX_AMOSTRAS = 60000;      // about eleven minutes at 90 Hz
+let lances = 0, perdas = 0, t0 = 0;
+
+const camPos = new THREE.Vector3();
+const camQuat = new THREE.Quaternion();
+const camInv = new THREE.Quaternion();
+const tmp = new THREE.Vector3();
+
+function registar(t, m, evento) {
+  if (amostras.length >= MAX_AMOSTRAS) return;
+  const r3 = v => Math.round(v * 1000) / 1000;
+  amostras.push([
+    Math.round(t),          // ms since the session began
+    m.idx,
+    m.activa ? 1 : 0,
+    r3(m.rel.x), r3(m.rel.y), r3(m.rel.z),        // wrist, head-relative
+    r3(m.vel.x), r3(m.vel.y), r3(m.vel.z),        // velocity, head-relative
+    r3(m.vel.length()),
+    m.estado,
+    evento || ''
+  ]);
+}
+
+const CABECALHO = ['t_ms','mao','seguida','rel_x','rel_y','rel_z',
+                   'vel_x','vel_y','vel_z','vel_abs','estado','evento'];
+
+function paraCSV() {
+  const linhas = [CABECALHO.join(',')];
+  for (const a of amostras) linhas.push(a.join(','));
+  return linhas.join('\n');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  THE STATE MACHINE
+//  Deliberately loose. It is not deciding whether to throw a snowball —
+//  it is labelling the recording so the data is readable afterwards.
+// ═══════════════════════════════════════════════════════════
+const LIM_RECUO = 0.9;       // m/s backwards to count as winding up
+const LIM_LANCE = 1.6;       // m/s forwards to count as a throw
+const JANELA_REGRESSO = 700; // ms after a loss that a return still counts
+
+function passo(m, t, dt) {
+  const anterior = m.estado;
+  let evento = '';
+
+  if (!m.activa) {
+    if (anterior !== 'perdida') {
+      // Just vanished. Remember exactly where and how fast, because this
+      // is all the evidence the throw will ever leave behind.
+      m.perdidaEm = t;
+      m.relAoPerder.copy(m.rel);
+      m.velAoPerder.copy(m.vel);
+      m.estado = 'perdida';
+      perdas++;
+      evento = 'perdeu';
+    }
+    return evento;
+  }
+
+  if (anterior === 'perdida') {
+    const fora = t - m.perdidaEm;
+    evento = `voltou:${Math.round(fora)}`;
+    // A hand that comes back moving forward, soon after going missing
+    // while winding up, is the case this lab exists to characterise.
+    if (fora < JANELA_REGRESSO && m.vel.z < -LIM_LANCE) {
+      m.estado = 'lancada'; m.tParado = t; lances++;
+      evento += ':lance_no_regresso';
+    } else {
+      m.estado = 'parada';
+    }
+    return evento;
+  }
+
+  // Head-relative +Z is behind the player, so a positive z velocity is the
+  // hand travelling backwards: a wind-up.
+  if (m.vel.z > LIM_RECUO) {
+    if (anterior !== 'recuo') {
+      m.estado = 'recuo'; m.recuoInicio = t; m.recuoPico = 0;
+      m.relNoRecuo.copy(m.rel);
+      evento = 'recuo_inicio';
+    }
+    m.recuoPico = Math.max(m.recuoPico, m.vel.length());
+    m.recuoDist = m.rel.distanceTo(m.relNoRecuo);
+  } else if (m.vel.z < -LIM_LANCE) {
+    if (anterior !== 'lancada') {
+      m.estado = 'lancada'; m.tParado = t; lances++;
+      evento = 'lance_visto';
+    }
+  } else if (anterior === 'lancada' && t - m.tParado > 350) {
+    m.estado = 'parada'; m.recuoDist = 0;
+  } else if (anterior === 'recuo' && m.vel.length() < 0.4) {
+    m.estado = 'parada'; evento = 'recuo_abortado'; m.recuoDist = 0;
+  }
+  return evento;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  FRAME
+// ═══════════════════════════════════════════════════════════
+function actualizarMao(m, t, dt) {
+  const juntas = m.mao.joints;
+  const nomes = juntas ? Object.keys(juntas) : [];
+  const pulso = juntas && juntas['wrist'];
+
+  if (!nomes.length || !pulso) {
+    m.activa = false;
+    for (const s of m.esferas.values()) s.visible = false;
+    return passo(m, t, dt);
+  }
+
+  pulso.getWorldPosition(tmp);
+
+  // visionOS replays the last known transform once a hand leaves the
+  // cameras, so a perfectly still wrist means 'gone', not 'steady'.
+  if (tmp.distanceToSquared(m.posAnt) < 1e-10 && m.temAnt) {
+    m.tParado += dt;
+    if (m.tParado > 0.25) {
+      m.activa = false;
+      for (const s of m.esferas.values()) s.visible = false;
+      return passo(m, t, dt);
+    }
+  } else {
+    m.tParado = 0;
+  }
+
+  m.activa = true;
+  m.pos.copy(tmp);
+
+  // Head-relative position and velocity.
+  camInv.copy(camQuat).invert();
+  m.rel.copy(m.pos).sub(camPos).applyQuaternion(camInv);
+  if (m.temAnt && dt > 0) {
+    m.vel.copy(m.rel).sub(m.posAnt).divideScalar(dt);
+  }
+  m.posAnt.copy(m.rel);
+  m.temAnt = true;
+
+  for (const nome of nomes) {
+    const j = juntas[nome];
+    let s = m.esferas.get(nome);
+    if (!s) {
+      s = new THREE.Mesh(geoJunta, nome === 'wrist' ? matPulso : matJunta);
+      cena.add(s); m.esferas.set(nome, s);
+    }
+    if (j.visible === false) { s.visible = false; continue; }
+    j.getWorldPosition(tmp);
+    s.position.copy(tmp);
+    s.visible = true;
+  }
+
+  return passo(m, t, dt);
+}
+
+function empurrarRasto(p) {
+  const pos = rastoGeo.attributes.position;
+  for (let i = RASTO - 1; i > 0; i--) {
+    pos.setXYZ(i, pos.getX(i - 1), pos.getY(i - 1), pos.getZ(i - 1));
+  }
+  pos.setXYZ(0, p.x, p.y, p.z);
+  pos.needsUpdate = true;
+  rastoN = Math.min(rastoN + 1, RASTO);
+  rastoGeo.setDrawRange(0, rastoN);
+}
+
+let ultimo = 0, contaPainel = 0;
+
+function frame() {
+  const agora = performance.now();
+  const dt = Math.min((agora - ultimo) / 1000, 0.05);
+  ultimo = agora;
+  const t = agora - t0;
+
+  cena.updateMatrixWorld(true);
+  const cam = render.xr.getCamera();
+  cam.getWorldPosition(camPos);
+  cam.getWorldQuaternion(camQuat);
+
+  for (const m of maos) {
+    const evento = actualizarMao(m, t, dt);
+    registar(t, m, evento);
+    if (m.idx === 0 && m.activa) empurrarRasto(m.pos);
+  }
+
+  // Panel parked to the left, out of the throwing arc.
+  painel.malha.position.set(camPos.x, camPos.y - 0.15, camPos.z);
+  painel.malha.quaternion.copy(camQuat);
+  painel.malha.translateX(-0.62);
+  painel.malha.translateZ(-1.15);
+  painel.malha.rotateY(0.42);
+
+  contaPainel += dt;
+  if (contaPainel > 0.12) { contaPainel = 0; desenharPainel(); actualizarNumeros(); }
+
+  render.render(cena, camara);
+}
+
+function actualizarNumeros() {
+  $('nAmostras').textContent = amostras.length;
+  $('nLances').textContent = lances;
+  $('nPerdas').textContent = perdas;
+  $('nSeg').textContent = Math.round((performance.now() - t0) / 1000);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SESSION
+// ═══════════════════════════════════════════════════════════
+entrarBt.addEventListener('click', async () => {
+  if (!xrOk) return;
+  entrarBt.disabled = true;
+  estadoEl.textContent = 'A entrar…';
+  try {
+    const sessao = await navigator.xr.requestSession('immersive-vr',
+      { optionalFeatures: ['local-floor', 'hand-tracking'] });
+    render.xr.setReferenceSpaceType('local-floor');
+    await render.xr.setSession(sessao);
+    t0 = performance.now(); ultimo = t0;
+    render.setAnimationLoop(frame);
+    estadoEl.textContent = 'A gravar. Faz os arremessos e depois sai da sessão.';
+    sessao.addEventListener('end', async () => {
+      render.setAnimationLoop(null);
+      entrarBt.disabled = false;
+      entrarBt.textContent = 'Entrar de novo';
+      $('saida').value = paraCSV();
+      actualizarNumeros();
+      estadoEl.textContent =
+        `Sessão terminada: ${amostras.length} amostras, ${lances} lances, ${perdas} perdas.`;
+      // Sent without being asked. Copying text out of a Vision Pro is
+      // painful enough that leaving it to a button would mean, in
+      // practice, losing recordings.
+      const r = await enviarParaServidor(true);
+      if (r) estadoEl.innerHTML = estadoEl.textContent +
+        ` <strong>Guardada no servidor</strong> — vai buscá-la a ` +
+        `<code>${location.origin}/logs</code>`;
+    });
+  } catch (e) {
+    entrarBt.disabled = false;
+    estadoEl.textContent = 'Não foi possível entrar: ' + e.message;
+  }
+});
+
+$('limpar').addEventListener('click', () => {
+  amostras.length = 0; lances = 0; perdas = 0;
+  $('saida').value = '';
+  actualizarNumeros();
+  estadoEl.textContent = 'Registo limpo.';
+});
+
+$('copiar').addEventListener('click', async () => {
+  const txt = amostras.length ? paraCSV() : '';
+  if (!txt) { estadoEl.textContent = 'Ainda não há dados.'; return; }
+  $('saida').value = txt;
+  try {
+    await navigator.clipboard.writeText(txt);
+    estadoEl.textContent = `Copiado: ${amostras.length} amostras.`;
+  } catch (e) {
+    $('saida').select();
+    estadoEl.textContent = 'Selecionado — copia com Cmd+C.';
+  }
+});
+
+async function enviarParaServidor(silencioso) {
+  if (!amostras.length) {
+    if (!silencioso) estadoEl.textContent = 'Ainda não há dados.';
+    return null;
+  }
+  const etiqueta = 'arremesso-' + new Date().toISOString().slice(11, 16).replace(':', 'h');
+  try {
+    const r = await fetch(
+      new URL('/callog?label=' + encodeURIComponent(etiqueta), location.origin).href,
+      { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: paraCSV() });
+    if (!r.ok) {
+      if (!silencioso) estadoEl.textContent = 'O servidor recusou: ' + r.status;
+      return null;
+    }
+    return await r.json();
+  } catch (e) {
+    if (!silencioso) estadoEl.textContent = 'Sem servidor aqui — usa o botão de copiar.';
+    return null;
+  }
+}
+
+$('enviar').addEventListener('click', async () => {
+  const r = await enviarParaServidor(false);
+  if (r) estadoEl.innerHTML =
+    `Guardada: ${(r.bytes / 1048576).toFixed(2)} MB. ` +
+    `Vai buscá-la a <code>${location.origin}/logs</code>`;
+});
+</script>
+</body>
+</html>

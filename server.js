@@ -12,7 +12,7 @@
 //  and explain gestures to a five-year-old.
 // ═══════════════════════════════════════════════════════════
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, extname } from 'node:path';
 import { WebSocketServer } from 'ws';
@@ -26,11 +26,83 @@ const PORTA = process.env.PORT || 8080;
 // need to outlive a restart they belong in a real database.
 const MAX_SCORES = 200;
 let scores = [];        // { name, score, at }
-let calLogs = [];       // raw calibration CSV blobs, newest last
+let calLogs = [];       // recordings, newest last
+let proximoLog = 0;
 const MAX_LOGS = 40;
 
 const players = new Set();     // headsets
 const viewers = new Set();     // control panels and spectator screens
+
+const PASTA_LOGS = join(AQUI, 'gravacoes');
+async function gravarEmDisco(reg) {
+  await mkdir(PASTA_LOGS, { recursive: true });
+  const nome = `${reg.id}-${reg.label}-${reg.at}.csv`;
+  await writeFile(join(PASTA_LOGS, nome), reg.csv, 'utf8');
+}
+async function lerDoDisco() {
+  try {
+    const ficheiros = (await readdir(PASTA_LOGS)).filter(f => f.endsWith('.csv')).sort();
+    for (const f of ficheiros.slice(-MAX_LOGS)) {
+      const [id, ...resto] = f.replace(/\.csv$/, '').split('-');
+      const at = Number(resto.pop()) || Date.now();
+      const csv = await readFile(join(PASTA_LOGS, f), 'utf8');
+      calLogs.push({ id, at, label: resto.join('-') || 'sessao', csv });
+      proximoLog = Math.max(proximoLog, Number(id) || 0);
+    }
+    if (calLogs.length) console.log(`${calLogs.length} grava\u00e7\u00f5es recuperadas do disco`);
+  } catch (e) { /* nenhuma ainda */ }
+}
+
+// A plain page listing what has been recorded, so a laptop can collect a
+// session the headset made without anyone fighting AirDrop.
+function paginaLogs(lista) {
+  const escapar = t => String(t).replace(/[<>&"]/g, c =>
+    ({ '<':'&lt;', '>':'&gt;', '&':'&amp;', '"':'&quot;' })[c]);
+  const linhas = lista.map(l => `
+    <tr>
+      <td>${escapar(l.label)}</td>
+      <td>${new Date(l.at).toLocaleString('pt-PT')}</td>
+      <td class="n">${l.linhas.toLocaleString('pt-PT')}</td>
+      <td class="n">${(l.bytes / 1048576).toFixed(2)} MB</td>
+      <td><a href="/logs/${l.id}">descarregar</a>
+          <button data-id="${l.id}">copiar</button></td>
+    </tr>`).join('');
+  return `<!DOCTYPE html><html lang="pt"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sess\u00f5es gravadas</title>
+<style>
+ body{margin:0;padding:34px 22px 70px;background:#070a12;color:#eef3ff;
+   font:16px/1.5 -apple-system,BlinkMacSystemFont,system-ui,sans-serif}
+ .w{max-width:820px;margin:0 auto}
+ h1{font-size:32px;margin:0 0 6px;letter-spacing:-.02em}
+ p.sub{color:#7d879e;margin:0 0 26px}
+ table{width:100%;border-collapse:collapse;font-size:15px}
+ th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:.1em;
+   color:#4a5468;padding:0 10px 10px 0;font-weight:600}
+ td{padding:12px 10px 12px 0;border-top:1px solid #1e2637;vertical-align:middle}
+ td.n{font-family:ui-monospace,Menlo,monospace;color:#7d879e}
+ a{color:#5b8cff}
+ button{margin-left:9px;background:#26324a;color:#eef3ff;border:none;border-radius:8px;
+   padding:7px 13px;font:inherit;font-size:14px;cursor:pointer}
+ .vazio{color:#7d879e;padding:36px 0}
+</style></head><body><div class="w">
+<h1>Sess\u00f5es gravadas</h1>
+<p class="sub">O que foi gravado dentro dos \u00f3culos. Descarrega aqui, no computador.</p>
+${lista.length ? `<table>
+ <tr><th>sess\u00e3o</th><th>quando</th><th>linhas</th><th>tamanho</th><th></th></tr>
+ ${linhas}</table>` : '<p class="vazio">Ainda nada gravado.</p>'}
+</div>
+<script>
+for (const b of document.querySelectorAll('button[data-id]')) {
+  b.onclick = async () => {
+    const t = await (await fetch('/logs/' + b.dataset.id)).text();
+    try { await navigator.clipboard.writeText(t); b.textContent = 'copiado'; }
+    catch (e) { b.textContent = 'falhou'; }
+    setTimeout(() => { b.textContent = 'copiar'; }, 1600);
+  };
+}
+</script></body></html>`;
+}
 
 // ── HTTP ────────────────────────────────────────────────────
 const TIPOS = {
@@ -108,15 +180,58 @@ const servidor = createServer(async (req, res) => {
     } catch (e) { return json(res, 400, { error: 'bad body' }); }
   }
 
-  // ── calibration logs ──
+  // ── session logs ──
+  // Getting a file off a Vision Pro is genuinely awkward, so a recording
+  // made inside the headset is posted here and collected later from a
+  // laptop. A throw session runs to several megabytes, hence the raised
+  // ceiling: the default would have rejected it with a bare 400.
   if (rota === '/callog' && req.method === 'POST') {
     try {
-      const texto = await corpo(req);
-      calLogs.push({ at: Date.now(), csv: texto });
+      const texto = await corpo(req, 16_000_000);
+      const etiqueta = (url.searchParams.get('label') || 'sessao').slice(0, 40)
+        .replace(/[^\w\- ]/g, '');
+      const id = String(++proximoLog);
+      const reg = { id, at: Date.now(), label: etiqueta, csv: texto };
+      calLogs.push(reg);
       if (calLogs.length > MAX_LOGS) calLogs.shift();
-      return json(res, 200, { ok: true, n: calLogs.length });
+      // Also to disk. Render's free tier wipes this on every deploy, so it
+      // is not permanence — but it does survive the server restarting
+      // under you between the recording and the walk to the laptop.
+      gravarEmDisco(reg).catch(() => {});
+      return json(res, 200, { ok: true, id, bytes: texto.length,
+                              url: '/logs/' + id });
     } catch (e) { return json(res, 400, { error: 'bad body' }); }
   }
+
+  // Index, as JSON for scripts and as a page for a person.
+  if (rota === '/logs' && req.method === 'GET') {
+    const lista = calLogs.map(l => ({
+      id: l.id, at: l.at, label: l.label,
+      bytes: l.csv.length,
+      linhas: l.csv.split('\n').length - 1
+    })).reverse();
+    if ((req.headers.accept || '').includes('application/json')) {
+      return json(res, 200, lista);
+    }
+    cors(res);
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8',
+                         'Cache-Control': 'no-cache' });
+    return res.end(paginaLogs(lista));
+  }
+
+  if (rota.startsWith('/logs/') && req.method === 'GET') {
+    const id = rota.slice(6);
+    const l = calLogs.find(x => x.id === id);
+    if (!l) return json(res, 404, { error: 'nao existe' });
+    cors(res);
+    const nome = `${l.label}-${new Date(l.at).toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
+    res.writeHead(200, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${nome}"`
+    });
+    return res.end(l.csv);
+  }
+
   if (rota === '/callog/latest' && req.method === 'GET') {
     const ultimo = calLogs[calLogs.length - 1];
     if (!ultimo) return json(res, 404, { error: 'none yet' });
@@ -270,6 +385,8 @@ function limpar(s) {
   if (era) difundirLista();
 }
 setInterval(baterCoracao, 5_000);
+
+await lerDoDisco();
 
 servidor.listen(PORTA, () => {
   console.log(`relay a correr na porta ${PORTA}`);

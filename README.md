@@ -11,6 +11,27 @@ Se não quiseres o painel de controlo nem a tabela partilhada, **só precisas
 da primeira**. O jogo funciona sozinho, com a tabela guardada no próprio
 dispositivo.
 
+## Endereços
+
+| endereço   | para quem |
+|------------|-----------|
+| `/`        | os jogadores (o hub) |
+| `/control` | o tablet do operador |
+| `/watch`   | ecrã de espectador |
+| `/logs`    | **as gravações feitas dentro dos óculos**, para descarregar no PC |
+| `/scores`  | a tabela, em JSON |
+
+### Tirar dados de dentro dos óculos
+
+Copiar texto de um Vision Pro para outro computador é penoso, por isso o
+laboratório de arremesso envia a gravação sozinho ao sair da sessão. Depois,
+no computador, abre `/logs`, e cada sessão tem um botão para descarregar e
+outro para copiar.
+
+As gravações vão também para a pasta `gravacoes/` e sobrevivem a um reinício
+do processo — mas **não a uma nova publicação**, que no Render recria o
+disco. Descarrega-as no mesmo dia.
+
 ---
 
 ## Opção A — tudo no mesmo servidor (mais simples)

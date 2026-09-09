@@ -134,6 +134,16 @@
 <!-- The sight is the ring on the ground, not a mark on the glass: the view
      no longer follows the barrel, so a fixed crosshair would point at sky.
      What stays here is the caption. -->
+<!-- How far the player is leaning. Without it the lean is invisible until
+     a ball misses, and nobody learns the control. -->
+<div id="inclinacao" style="display:none;position:fixed;left:50%;bottom:74px;
+     transform:translateX(-50%);width:190px;height:5px;border-radius:3px;
+     background:rgba(255,255,255,.16);pointer-events:none;z-index:10">
+  <div id="inclinacaoPino" style="position:absolute;left:50%;top:-4px;width:13px;height:13px;
+       margin-left:-6.5px;border-radius:50%;background:#eaf0ff;
+       box-shadow:0 1px 6px rgba(0,0,0,.5);transition:background .15s"></div>
+</div>
+
 <div id="legenda" style="display:none;position:fixed;left:0;right:0;bottom:22px;
      text-align:center;pointer-events:none;z-index:10;
      font:600 15px ui-rounded,-apple-system,sans-serif;color:rgba(255,255,255,.7);
@@ -3260,6 +3270,7 @@ const MAO_BAIXO = 0.52, MAO_NEUTRA = 0.73, MAO_CIMA = 0.95;
 // ═══════════════════════════════════════════════════════════
 const telemovel = {
   yaw: 0, pitch: 0,          // radians, from the device
+  roll: 0, rollZero: null,   // wheel-style tilt, used for dodging
   yawZero: null,             // heading that counts as 'straight ahead'
   arrasto: false,
   usaGiro: false,
@@ -3289,6 +3300,13 @@ function lerOrientacao(e) {
   if (telemovel.yawZero === null) telemovel.yawZero = ang.y;
   telemovel.yaw = ang.y - telemovel.yawZero;
   telemovel.pitch = ang.x;
+
+  // Roll — turning the handset like a steering wheel. Chosen over a
+  // sideways tilt because rolling does not change where the phone points,
+  // so it cannot disturb the aim. And in stick mode the gyro is otherwise
+  // idle: both thumbs are busy, and leaning the phone costs neither.
+  if (telemovel.rollZero === null) telemovel.rollZero = ang.z;
+  telemovel.roll = ang.z - telemovel.rollZero;
 }
 
 function ligarGiro() {
@@ -3327,7 +3345,11 @@ function ligarArrasto(el) {
 // lower limit of +0.05 rad hid it — the wrong-way values were clipped to
 // roughly horizontal — until the limit dropped to −0.42 and let the
 // barrel really swing the wrong way.
-const PITCH_MIN_MOVEL = -0.85, PITCH_MAX_MOVEL = 1.05;
+// Level ground is the floor. In the headset your hands can point the tube
+// into the snow and that is your business; on a phone there is nothing to
+// gain from it and a beginner who aims below the horizon just watches the
+// ball die two metres out. So zero is as low as it goes.
+const PITCH_MIN_MOVEL = 0, PITCH_MAX_MOVEL = 1.05;
 
 // ── ON-SCREEN STICK ───────────────────────────────────────
 // The stick sets a RATE, not a position: pushing right keeps turning right
@@ -3422,6 +3444,61 @@ function olharDe(p) {
   return THREE.MathUtils.clamp(p * OLHAR_FRACCAO, OLHAR_MIN, OLHAR_MAX);
 }
 
+// ── DODGING ───────────────────────────────────────────────
+// In the headset you step aside; the gingerbread's ball is tested against
+// your actual head. On a phone there is nowhere to step, so the player
+// leans the handset and the body leans with it. It reads as ducking
+// because the whole world slides the other way.
+const desvio = { actual: 0, alvo: 0 };
+const DESVIO_MAX = 1.15;          // metres either side
+const ROLL_CHEIO = 0.55;          // radians of roll for a full lean
+
+// Without a gyro — a desktop browser, or a refused permission — dragging
+// anywhere on the right half leans instead. Nobody should be unable to
+// dodge because of a permission dialog.
+let arrastoDesvio = null;
+function ligarDesvioPorArrasto(el) {
+  const comeca = (x, id) => { arrastoDesvio = { x0: x, base: desvio.alvo, id }; };
+  const move = (x) => {
+    if (!arrastoDesvio) return;
+    desvio.alvo = THREE.MathUtils.clamp(
+      arrastoDesvio.base + (x - arrastoDesvio.x0) / (innerWidth * 0.25) * DESVIO_MAX,
+      -DESVIO_MAX, DESVIO_MAX);
+  };
+  el.addEventListener('touchstart', e => {
+    const t = e.changedTouches[0];
+    if (t.clientX > innerWidth * 0.5) comeca(t.clientX, t.identifier);
+  }, { passive: true });
+  el.addEventListener('touchmove', e => {
+    for (const t of e.changedTouches) if (arrastoDesvio && t.identifier === arrastoDesvio.id) move(t.clientX);
+  }, { passive: true });
+  el.addEventListener('touchend', () => { arrastoDesvio = null; }, { passive: true });
+  el.addEventListener('mousedown', e => { if (e.clientX > innerWidth * 0.5) comeca(e.clientX, 'rato'); });
+  addEventListener('mousemove', e => { if (arrastoDesvio) move(e.clientX); });
+  addEventListener('mouseup', () => { arrastoDesvio = null; });
+}
+
+const pinoIncl = () => document.getElementById('inclinacaoPino');
+
+function actualizarDesvio(dt) {
+  if (telemovel.rollZero !== null) {
+    desvio.alvo = THREE.MathUtils.clamp(telemovel.roll / ROLL_CHEIO, -1, 1) * DESVIO_MAX;
+  }
+  // Springy rather than instant: a snap sideways is unreadable, and a
+  // little inertia is what makes it feel like leaning rather than teleporting.
+  desvio.actual += (desvio.alvo - desvio.actual) * Math.min(dt * 7, 1);
+  // Let go and you drift back to centre, so nobody ends a round pinned to
+  // one side without noticing.
+  if (telemovel.rollZero === null && !arrastoDesvio) desvio.alvo *= 0.92;
+
+  const p = pinoIncl();
+  if (p) {
+    const f = desvio.actual / DESVIO_MAX;
+    p.style.transform = `translateX(${f * 88}px)`;
+    p.style.background = Math.abs(f) > 0.75 ? '#4dd6ff' : '#eaf0ff';
+  }
+}
+
 function aplicarPontaria(p, y) {
   yaw = yawTarget = y;
   pitch = pitchTarget = p;
@@ -3433,6 +3510,13 @@ function aplicarPontaria(p, y) {
   // Put the assembly ON the eye and turn it. The post sits at PIVOT within
   // the assembly, so after the turn it lands exactly 95 cm along the line
   // of sight — every time, at every angle.
+  // The lean is perpendicular to where the player is looking, so it always
+  // means "sideways" from their point of view.
+  const lx = Math.cos(y) * desvio.actual;
+  const lz = -Math.sin(y) * desvio.actual;
+  camera.position.x = lx;
+  camera.position.z = lz;
+
   cannonAssembly.position.set(camera.position.x, 0, camera.position.z);
   cannonAssembly.rotation.y = y;
 
@@ -3448,8 +3532,7 @@ function aimCannonTelemovel() {
   // player never has to point the phone at the ceiling to reach the back
   // of the field.
   const t = THREE.MathUtils.clamp(telemovel.pitch / 0.42, -1, 1);
-  const p = t >= 0 ? t * PITCH_MAX_MOVEL : -t * PITCH_MIN_MOVEL;
-  aplicarPontaria(p, telemovel.yaw);
+  aplicarPontaria(Math.max(t, 0) * PITCH_MAX_MOVEL, telemovel.yaw);
 }
 
 function aimCannon() {
@@ -3714,7 +3797,8 @@ function desenharFrame() {
 
     // The phone stands in for the head: fixed eye height, orientation from
     // the device. No hand tracking at all, so no calibration either.
-    camera.position.set(0, 1.55, 0);
+    camera.position.y = 1.55;
+    actualizarDesvio(dt);
     if (modoJoystick) aimCannonJoystick(dt); else aimCannonTelemovel();
     camera.getWorldPosition(camPos);
     camera.getWorldQuaternion(camQuat);
@@ -3916,20 +4000,25 @@ enterBtn.addEventListener('click', () => {
   addEventListener('resize', verificarOrientacao);
   addEventListener('orientationchange', () => setTimeout(verificarOrientacao, 300));
 
+  // The gyro comes up in BOTH modes now: with sticks it is not used for
+  // aiming, but the lean-to-dodge needs it, and the permission prompt has
+  // to ride on this same tap.
+  ligarGiro();
   if (modoJoystick) {
     ligarJoystick();
     document.getElementById('joysticks').style.display = 'block';
   } else {
-    ligarGiro();
     ligarArrasto(renderer.domElement);
   }
   // The sight is the landing ring on the snow. A crosshair fixed to the
   // middle of the screen would point at whatever the view happens to be
   // looking at, which is no longer where the ball goes.
   document.getElementById('legenda').style.display = 'block';
+  document.getElementById('inclinacao').style.display = 'block';
+  ligarDesvioPorArrasto(renderer.domElement);
   document.getElementById('dica').textContent = modoJoystick
-    ? 'cursor para apontar \u00b7 bot\u00e3o para atirar'
-    : 'move o telem\u00f3vel para apontar \u00b7 toca para disparar';
+    ? 'cursor para apontar \u00b7 bot\u00e3o para atirar \u00b7 inclina para te desviares'
+    : 'move para apontar \u00b7 toca para disparar \u00b7 inclina para te desviares';
   document.getElementById('hudMovel').style.visibility = 'visible';
 
   // Tapping the canvas throws. One tap, one snowball \u2014 the charge-up
