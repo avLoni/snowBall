@@ -3270,7 +3270,7 @@ const MAO_BAIXO = 0.52, MAO_NEUTRA = 0.73, MAO_CIMA = 0.95;
 // ═══════════════════════════════════════════════════════════
 const telemovel = {
   yaw: 0, pitch: 0,          // radians, from the device
-  roll: 0, rollZero: null,   // wheel-style tilt, used for dodging
+  roll: 0, rollCru: 0, rollBase: null,   // wheel-style tilt, used for dodging
   yawZero: null,             // heading that counts as 'straight ahead'
   arrasto: false,
   usaGiro: false,
@@ -3305,8 +3305,14 @@ function lerOrientacao(e) {
   // sideways tilt because rolling does not change where the phone points,
   // so it cannot disturb the aim. And in stick mode the gyro is otherwise
   // idle: both thumbs are busy, and leaning the phone costs neither.
-  if (telemovel.rollZero === null) telemovel.rollZero = ang.z;
-  telemovel.roll = ang.z - telemovel.rollZero;
+  //
+  // The reference is NOT a zero taken once. A single reading lands while
+  // the handset is still swinging into landscape, and every lean after
+  // that is measured from a crooked baseline — the game thought the
+  // player was permanently dodging. It settles continuously instead.
+  telemovel.rollCru = ang.z;
+  if (telemovel.rollBase === null) telemovel.rollBase = ang.z;
+  telemovel.roll = ang.z - telemovel.rollBase;
 }
 
 function ligarGiro() {
@@ -3487,22 +3493,54 @@ function ligarDesvioPorArrasto(el) {
 
 const pinoIncl = () => document.getElementById('inclinacaoPino');
 
+// True while one of the gingerbread's throws is within a moment of
+// arriving. Without a cue the timing is guesswork, and guesswork is not
+// difficulty — it is noise.
+let bolaAChegar = false;
+const AVISO_SEG = 0.85;
+
+function verBolaAChegar() {
+  bolaAChegar = false;
+  for (const b of snowballs) {
+    if (!b.hostile) continue;
+    const dz = b.mesh.position.z - camPos.z;
+    const vz = b.velocity.z;
+    if (vz >= -0.01) continue;             // not coming this way
+    const t = dz / -vz;
+    if (t > 0 && t < AVISO_SEG) { bolaAChegar = true; return; }
+  }
+}
+
+// Whatever posture the player settles into becomes the new centre, over
+// about two seconds. Two things fall out of that, and both are wanted.
+// Any way of holding the handset works, including whatever crooked angle
+// they end a round in. And a lean CANNOT be parked: hold it and you slide
+// back to the middle, so the dodge has to be made at the moment the ball
+// arrives rather than a second before.
+const ASSENTA = 2.2;             // seconds for a held posture to become centre
+
 function actualizarDesvio(dt) {
-  if (telemovel.rollZero !== null) {
+  if (telemovel.rollBase !== null) {
+    telemovel.rollBase += (telemovel.rollCru - telemovel.rollBase) * Math.min(dt / ASSENTA, 1);
+    telemovel.roll = telemovel.rollCru - telemovel.rollBase;
     desvio.alvo = THREE.MathUtils.clamp(telemovel.roll / ROLL_CHEIO, -1, 1) * DESVIO_MAX;
   }
   // Springy rather than instant: a snap sideways is unreadable, and a
   // little inertia is what makes it feel like leaning rather than teleporting.
   desvio.actual += (desvio.alvo - desvio.actual) * Math.min(dt * 7, 1);
-  // Let go and you drift back to centre, so nobody ends a round pinned to
-  // one side without noticing.
-  if (telemovel.rollZero === null && !arrastoDesvio) desvio.alvo *= 0.92;
+  if (telemovel.rollBase === null && !arrastoDesvio) desvio.alvo *= 0.92;
 
   const p = pinoIncl();
   if (p) {
     const f = desvio.actual / DESVIO_MAX;
     p.style.transform = `translateX(${f * 88}px)`;
-    p.style.background = Math.abs(f) > 0.75 ? '#4dd6ff' : '#eaf0ff';
+    // Amber while a ball is on its way: the cue that tells the player WHEN,
+    // which is the whole skill once holding a lean stops working.
+    p.style.background = bolaAChegar ? '#ffb45c'
+                       : (Math.abs(f) > 0.75 ? '#4dd6ff' : '#eaf0ff');
+    const barra = p.parentElement;
+    if (barra) barra.style.background = bolaAChegar
+      ? 'rgba(255,180,92,.35)' : 'rgba(255,255,255,.16)';
   }
 }
 
@@ -3805,6 +3843,7 @@ function desenharFrame() {
     // The phone stands in for the head: fixed eye height, orientation from
     // the device. No hand tracking at all, so no calibration either.
     camera.position.y = 1.55;
+    verBolaAChegar();
     actualizarDesvio(dt);
     if (modoJoystick) aimCannonJoystick(dt); else aimCannonTelemovel();
     camera.getWorldPosition(camPos);
@@ -4005,7 +4044,11 @@ enterBtn.addEventListener('click', () => {
   };
   verificarOrientacao();
   addEventListener('resize', verificarOrientacao);
-  addEventListener('orientationchange', () => setTimeout(verificarOrientacao, 300));
+  addEventListener('orientationchange', () => {
+    setTimeout(verificarOrientacao, 300);
+    // The whole frame of reference just moved; start the baseline over.
+    telemovel.rollBase = null;
+  });
 
   // The gyro comes up in BOTH modes now: with sticks it is not used for
   // aiming, but the lean-to-dodge needs it, and the permission prompt has
