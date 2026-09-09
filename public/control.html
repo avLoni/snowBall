@@ -23,13 +23,20 @@
   .quadro.vaga .estadoQ { color:var(--suave); }
   #grelha.cheio { grid-template-columns:1fr; grid-template-rows:1fr; }
 
+  /* The 3D lives on a canvas BEHIND these tiles, so the rounded corners
+     cannot clip it — the picture bled out past the frame. The render is
+     inset instead, and this dark ground shows through the rounded edge, so
+     the corner belongs to the frame rather than to the arena. */
   .quadro { position:relative; border:1px solid var(--linha); border-radius:14px;
-    overflow:hidden; display:flex; flex-direction:column; justify-content:space-between; }
+    overflow:hidden; background:#080d1a;
+    display:flex; flex-direction:column; justify-content:space-between; }
   .quadro.activo { border-color:var(--azul); }
   .quadro.acorrer { border-color:var(--verde); }
+  .quadro.mudo { border-color:#5a4a2a; }
+  .quadro.mudo .topo, .quadro.mudo .fundo { opacity:.45; }
   .quadro .topo, .quadro .fundo { pointer-events:none; }
   .quadro .topo { display:flex; align-items:center; gap:12px; padding:11px 13px;
-    background:linear-gradient(rgba(6,10,20,.85), transparent); }
+    background:linear-gradient(rgba(8,13,26,.96) 55%, rgba(8,13,26,0)); }
   .quadro .nome { font-weight:700; font-size:16px; flex:1; min-width:0;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .quadro .marc { font-size:26px; font-weight:800; line-height:1; }
@@ -547,8 +554,8 @@ function construirQuadro(id, f) {
 
 function piscar(b) {
   const t = b.textContent;
-  b.textContent = '✓';
-  setTimeout(() => { b.textContent = t; }, 500);
+  b.textContent = '✓ enviado';
+  setTimeout(() => { b.textContent = t; }, 700);
 }
 
 function arrumarGrelha() {
@@ -598,8 +605,12 @@ function arrumarGrelha() {
 }
 
 function comando(cmd, value, target) {
-  if (!sock || sock.readyState !== 1) return;
+  if (!sock || sock.readyState !== 1) {
+    $('eLig').textContent = 'sem ligação — comando não enviado';
+    return false;
+  }
   sock.send(JSON.stringify({ cmd, value, target }));
+  return true;
 }
 
 // ── the link ──
@@ -784,6 +795,21 @@ let ultimo = performance.now(), frames = 0;
 setInterval(() => {
   $('eFps').textContent = frames; frames = 0;
   $('eEsc').textContent = escala.toFixed(2) + '×';
+
+  // A tile that has stopped reporting is a tile whose buttons do nothing.
+  // Saying so beats letting an operator press Start into a dead socket and
+  // wonder why the child is still standing there.
+  const agora = performance.now();
+  for (const [id, f] of feeds) {
+    if (!f.ui) continue;
+    const calado = f.t && (agora - f.t) > 3500;
+    f.ui.el.classList.toggle('mudo', !!calado);
+    if (calado) {
+      f.ui.estado.textContent = 'sem sinal deste dispositivo';
+      f.ui.arranca.disabled = true;
+      f.ui.para.disabled = true;
+    }
+  }
 }, 1000);
 
 function desenhar() {
@@ -813,11 +839,16 @@ function desenhar() {
     // itself. Doing it here as well shrank every pane by exactly the
     // resolution scale, which is why the picture crept into the corner as
     // the adaptive scaler wound down.
-    const x = r.left, y = alturaJanela - r.bottom;
-    const l = r.width, h = r.height;
+    //
+    // Pulled in by the corner radius so the arena never reaches the rounded
+    // edge. Without it the square canvas showed through the corners of a
+    // round frame, which looked like a mistake because it was one.
+    const M = 13;
+    const x = r.left + M, y = alturaJanela - r.bottom + M;
+    const l = Math.max(r.width - M * 2, 1), h = Math.max(r.height - M * 2, 1);
     render.setViewport(x, y, l, h);
     render.setScissor(x, y, l, h);
-    f.actores.camara.aspect = r.width / r.height;
+    f.actores.camara.aspect = l / h;
     f.actores.camara.updateProjectionMatrix();
     render.render(cena, f.actores.camara);
   }

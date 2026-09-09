@@ -233,15 +233,31 @@ wss.on('connection', (sock, req) => {
       difundirLista();
     }
   });
+  sock.vivo = true;
+  sock.on('pong', () => { sock.vivo = true; });
   sock.on('error', () => {});
 });
 
-// Drop connections that have gone quiet without saying goodbye.
-setInterval(() => {
+// ── Heartbeat ─────────────────────────────────────────────
+// A headset that reloads the page, loses Wi-Fi or goes to sleep leaves a
+// socket the operating system has not yet torn down. The server keeps
+// listing it as a player, the panel keeps showing its tile, and pressing
+// Start on that tile sends the command into a hole. A ping every five
+// seconds finds them.
+function baterCoracao() {
   for (const s of [...players, ...viewers]) {
-    if (s.readyState !== 1) { players.delete(s); viewers.delete(s); }
+    if (s.readyState !== 1) { limpar(s); continue; }
+    if (s.vivo === false) { limpar(s); try { s.terminate(); } catch (e) {} continue; }
+    s.vivo = false;
+    try { s.ping(); } catch (e) { limpar(s); }
   }
-}, 30_000);
+}
+function limpar(s) {
+  const era = players.delete(s);
+  viewers.delete(s);
+  if (era) difundirLista();
+}
+setInterval(baterCoracao, 5_000);
 
 servidor.listen(PORTA, () => {
   console.log(`relay a correr na porta ${PORTA}`);
