@@ -57,7 +57,7 @@
 
   .bt { border:none; border-radius:10px; padding:12px 15px; font:inherit;
     font-weight:650; cursor:pointer; color:#08101f; }
-  .bt.arranca { background:var(--verde); }
+  .bt.arranca, .bt.verde { background:var(--verde); }
   .bt.para    { background:var(--vermelho); color:#fff; }
   .bt.sec     { background:rgba(255,255,255,.13); color:var(--texto); }
   .bt:disabled { opacity:.32; cursor:default; }
@@ -503,7 +503,7 @@ function construirQuadro(id, f) {
       '<div class="fimPts">0</div>' +
       '<div class="fimDet"></div>' +
       '<div class="fimBts">' +
-        '<button class="bt arranca outra">Jogar de novo</button>' +
+        '<button class="bt verde outra">Jogar de novo</button>' +
         '<button class="bt sec novo">Novo jogador</button>' +
       '</div>' +
     '</div>' +
@@ -521,10 +521,14 @@ function construirQuadro(id, f) {
     marc: el.querySelector('.marc'),
     rel:  el.querySelector('.rel'),
     estado: el.querySelector('.estadoQ'),
-    entrada: el.querySelector('.nomeIn'),
-    arranca: el.querySelector('.arranca'),
-    para: el.querySelector('.para'),
-    ampliar: el.querySelector('.ampliar'),
+    // Scoped to the footer on purpose. The end-of-round card sits earlier
+    // in the markup, and while its button shared the .arranca class a bare
+    // querySelector picked THAT one — so every handler and every label
+    // change went to a hidden button and the visible Start did nothing.
+    entrada: el.querySelector('.fundo .nomeIn'),
+    arranca: el.querySelector('.fundo .arranca'),
+    para: el.querySelector('.fundo .para'),
+    ampliar: el.querySelector('.fundo .ampliar'),
     splat: el.querySelector('.splat'),
     fimNome: el.querySelector('.fimNome'),
     fimPts: el.querySelector('.fimPts'),
