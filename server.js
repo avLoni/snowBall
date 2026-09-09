@@ -211,13 +211,25 @@ wss.on('connection', (sock, req) => {
     const PERMITIDOS = new Set(['start', 'stop', 'reset', 'name', 'recal', 'duration']);
     if (!PERMITIDOS.has(d.cmd)) return;
     const msg = JSON.stringify({ ev: 'cmd', cmd: d.cmd, value: d.value ?? null });
+    let entregues = 0;
+    const conhecidos = [];
     for (const p of players) {
+      conhecidos.push(p.meta.id);
       // A command aimed at one player leaves the others alone; without a
       // target it goes to everyone, which is what a single-headset setup
       // wants and what the panel sends by default.
       if (d.target && p.meta.id !== d.target) continue;
-      if (p.readyState === 1) { try { p.send(msg); } catch (e) {} }
+      if (p.readyState === 1) {
+        try { p.send(msg); entregues++; } catch (e) {}
+      }
     }
+    // Tell the panel what actually happened. Without this, a command that
+    // matched nobody looks exactly like a command that worked, and there is
+    // no way to tell a dead socket from a bug in the game.
+    try {
+      sock.send(JSON.stringify({ ev: 'cmd-ack', cmd: d.cmd,
+        target: d.target ?? null, entregues, conhecidos }));
+    } catch (e) {}
     // Echo to the other panels so two operators do not fight each other.
     for (const v of viewers) {
       if (v !== sock && v.readyState === 1) {

@@ -535,7 +535,8 @@ function connectRelay() {
       let d;
       try { d = JSON.parse(e.data); } catch (_) { return; }
       if (d.ev !== 'cmd') return;
-      aplicarComando(d.cmd, d.value);
+      try { aplicarComando(d.cmd, d.value); }
+      catch (err) { console.error('comando', d.cmd, err); }
     };
     relaySock.onclose = () => {
       relaySock = null;
@@ -562,11 +563,19 @@ function aplicarComando(cmd, valor) {
 
       // Straight into play. If the round was already going it restarts,
       // which is what the operator means when the next child steps up.
-      if (mode === 'calibrating') { mode = 'playing'; beginPlay(); }
-      resetGame(agora);
-      emEspera = false;          // cleared here and nowhere else
+      // The flags are set FIRST and the heavy work is guarded. resetGame
+      // builds targets, tests them against the scenery and resets the
+      // gingerbread; if any of that threw, the round stayed frozen with no
+      // sign of why, because the line clearing the wait came after it.
+      emEspera = false;
+      try {
+        if (mode === 'calibrating') { mode = 'playing'; beginPlay(); }
+        resetGame(agora);
+        capturarFrente();
+      } catch (e) {
+        console.error('arranque:', e);
+      }
       game.running = true;
-      capturarFrente();
       break;
     case 'stop':
       if (mode === 'playing' && !game.finished) endRound();

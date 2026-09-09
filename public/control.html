@@ -19,29 +19,40 @@
      same world, drawn with that player's actors and their own camera. */
   #grelha { position:fixed; inset:0; z-index:1; display:grid; gap:8px; padding:8px;
     grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; }
-  .quadro.vaga { border-style:dashed; opacity:.4; }
+  .quadro.vaga { opacity:.45; }
   .quadro.vaga .estadoQ { color:var(--suave); }
   #grelha.cheio { grid-template-columns:1fr; grid-template-rows:1fr; }
 
-  /* The 3D lives on a canvas BEHIND these tiles, so the rounded corners
-     cannot clip it — the picture bled out past the frame. The render is
-     inset instead, and this dark ground shows through the rounded edge, so
-     the corner belongs to the frame rather than to the arena. */
-  .quadro { position:relative; border:1px solid var(--linha); border-radius:14px;
-    overflow:hidden; background:#080d1a;
+  /* The 3D lives on a canvas BEHIND these tiles. A background here would
+     hide it completely — which is exactly what happened when I tried to
+     mask the corners that way. The tile stays transparent; the ring below
+     paints only the corners. */
+  .quadro { position:relative; border-radius:14px; background:transparent;
     display:flex; flex-direction:column; justify-content:space-between; }
-  .quadro.activo { border-color:var(--azul); }
-  .quadro.acorrer { border-color:var(--verde); }
-  .quadro.mudo { border-color:#5a4a2a; }
+
+  /* A band of page colour sitting just outside the rounded rectangle. It
+     covers the square canvas showing through the corners, and spills into
+     the gap between tiles, which is page colour anyway. */
+  .quadro::after {
+    content:''; position:absolute; inset:0; border-radius:14px; pointer-events:none;
+    box-shadow: 0 0 0 1px var(--linha), 0 0 0 11px var(--fundo);
+  }
+  .quadro.activo::after  { box-shadow: 0 0 0 2px var(--azul),  0 0 0 11px var(--fundo); }
+  .quadro.acorrer::after { box-shadow: 0 0 0 2px var(--verde), 0 0 0 11px var(--fundo); }
+  .quadro.mudo::after    { box-shadow: 0 0 0 2px #7a6432,      0 0 0 11px var(--fundo); }
+  .quadro.vaga::after    { box-shadow: 0 0 0 1px rgba(255,255,255,.12), 0 0 0 11px var(--fundo); }
   .quadro.mudo .topo, .quadro.mudo .fundo { opacity:.45; }
   .quadro .topo, .quadro .fundo { pointer-events:none; }
-  .quadro .topo { display:flex; align-items:center; gap:12px; padding:11px 13px;
-    background:linear-gradient(rgba(8,13,26,.96) 55%, rgba(8,13,26,0)); }
+  .quadro .topo { display:flex; align-items:center; gap:12px; padding:13px 15px 20px;
+    border-radius:14px 14px 0 0;
+    background:linear-gradient(rgba(8,13,26,.94) 58%, rgba(8,13,26,0)); }
   .quadro .nome { font-weight:700; font-size:16px; flex:1; min-width:0;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .quadro .marc { font-size:26px; font-weight:800; line-height:1; }
   .quadro .rel  { font-size:15px; color:var(--suave); min-width:44px; text-align:right; }
-  .quadro .fundo { display:flex; gap:8px; padding:11px; }
+  .quadro .fundo { display:flex; gap:8px; padding:20px 13px 13px;
+    border-radius:0 0 14px 14px;
+    background:linear-gradient(rgba(8,13,26,0), rgba(8,13,26,.94) 42%); }
   .quadro .fundo > * { pointer-events:auto; }
 
   .bt { border:none; border-radius:10px; padding:12px 15px; font:inherit;
@@ -59,7 +70,7 @@
      white and the snow slides down; here the pane does the same, so the
      operator sees the hit rather than having to infer it from the score. */
   .quadro .splat { position:absolute; inset:0; pointer-events:none; opacity:0;
-    background:#ffffff; }
+    background:#ffffff; border-radius:14px; }
   .quadro .splat.on { opacity:1; }
   /* Then it slides off the bottom, the way the snow does in the headset. */
   .quadro .splat.escorrega { transition:transform .95s cubic-bezier(.35,.75,.4,1),
@@ -69,7 +80,7 @@
      operator has one obvious place to look and two obvious things to do. */
   .quadro .fim { position:absolute; inset:0; display:none; flex-direction:column;
     align-items:center; justify-content:center; gap:5px; text-align:center; padding:18px;
-    background:rgba(8,14,28,.86); backdrop-filter:blur(5px); }
+    background:rgba(8,14,28,.9); backdrop-filter:blur(5px); border-radius:14px; }
   .quadro.terminado .fim { display:flex; }
   .quadro.terminado .topo, .quadro.terminado .fundo { display:none; }
   .fimRot { font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--suave); }
@@ -632,6 +643,23 @@ function ligar() {
         }
       }
       for (const id of [...feeds.keys()]) if (!vivos.has(id)) apagarFeed(id);
+    }
+    else if (d.ev === 'cmd-ack') {
+      // Says whether the command reached anybody. Silence used to be
+      // indistinguishable from success.
+      const f = d.target ? feeds.get(d.target) : null;
+      const texto = d.entregues > 0
+        ? `✓ ${d.cmd} entregue`
+        : `✗ ${d.cmd} não chegou a ninguém`;
+      if (f && f.ui) {
+        f.ui.estado.textContent = texto;
+        f.ui.estado.style.color = d.entregues > 0 ? 'var(--verde)' : 'var(--vermelho)';
+        setTimeout(() => { if (f.ui) f.ui.estado.style.color = ''; }, 2500);
+      }
+      if (!d.entregues) {
+        console.warn('comando sem destino', d.cmd, 'alvo:', d.target, 'ligados:', d.conhecidos);
+        $('eLig').textContent = 'alvo inexistente — ver consola';
+      }
     }
     else if (d.ev === 'state') {
       const id = d.id || 'p';
