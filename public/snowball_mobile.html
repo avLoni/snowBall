@@ -3284,6 +3284,14 @@ function anguloEcra() {
   return THREE.MathUtils.degToRad(Number(o) || 0);
 }
 
+const direita = new THREE.Vector3();
+// Should it ever read backwards on some device, ?lean=-1 flips it without
+// a rebuild.
+const SINAL_INCLINACAO = (() => {
+  const v = parseFloat(new URLSearchParams(location.search).get('lean'));
+  return v === -1 ? -1 : 1;
+})();
+
 function lerOrientacao(e) {
   if (e.alpha == null && e.beta == null) return;
   telemovel.usaGiro = true;
@@ -3310,9 +3318,15 @@ function lerOrientacao(e) {
   // the handset is still swinging into landscape, and every lean after
   // that is measured from a crooked baseline — the game thought the
   // player was permanently dodging. It settles continuously instead.
-  telemovel.rollCru = ang.z;
-  if (telemovel.rollBase === null) telemovel.rollBase = ang.z;
-  telemovel.roll = ang.z - telemovel.rollBase;
+  // Measured from the handset's own right edge rather than from a euler
+  // angle, because the sign of a euler component depends on the order it
+  // was extracted in and is easy to get backwards. This is physical: roll
+  // the phone clockwise and its right edge drops. Right edge down is a
+  // lean to the right, and there is nothing to second-guess.
+  direita.set(1, 0, 0).applyQuaternion(q);
+  telemovel.rollCru = Math.asin(THREE.MathUtils.clamp(-direita.y, -1, 1)) * SINAL_INCLINACAO;
+  if (telemovel.rollBase === null) telemovel.rollBase = telemovel.rollCru;
+  telemovel.roll = telemovel.rollCru - telemovel.rollBase;
 }
 
 function ligarGiro() {
