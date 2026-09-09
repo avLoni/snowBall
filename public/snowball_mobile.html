@@ -97,11 +97,11 @@
 <main>
   <a class="back" href="index.html">&larr; Todas as experiências</a>
   <h1>Canhão de Neve</h1>
-  <p class="sub">As tuas mãos são o comando. Mais nada.</p>
+  <p class="sub">O telemóvel é a mira. Toca para disparar.</p>
 
   <section class="card">
     <label for="playerName">O teu nome para a classificação</label>
-    <input type="text" id="playerName" maxlength="14" placeholder="Escreve aqui — não no headset" autocomplete="off">
+    <input type="text" id="playerName" maxlength="14" placeholder="Escreve aqui" autocomplete="off">
   </section>
 
   <section class="card">
@@ -660,7 +660,17 @@ statusEl.textContent = precisaAutorizacao
   ? 'Vais poder mover o telemóvel para apontar.'
   : 'Move o telemóvel para apontar. Toca no ecrã para disparar.';
 
-// no XR on the phone
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x112248);
+scene.fog = new THREE.Fog(0x304790, 20, 70);
+
+// Aspect is corrected the moment the canvas is sized, at start.
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.02, 200);
+scene.add(camera);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(window.innerWidth, window.innerHeight, false);
 document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.HemisphereLight(0x9fc0ff, 0x2a3550, 1.5));
@@ -3535,14 +3545,22 @@ function desenharFrame() {
 //  SESSION
 // ═══════════════════════════════════════════════════════════
 enterBtn.addEventListener('click', () => {
+  // Hide the whole menu, whatever it is wrapped in. An earlier version
+  // reached for an element id that does not exist here, which threw on the
+  // second line and left the button looking dead.
+  const menu = document.querySelector('main');
+  if (menu) menu.style.display = 'none';
   enterBtn.style.display = 'none';
-  document.getElementById('panel').style.display = 'none';
   statusEl.textContent = '';
   game.name = (nameInput.value || '').trim().slice(0, 14) || 'Anon';
 
-  if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
-  actx.resume().catch(() => {});
-  decodeClips();
+  // Audio must never be able to stop the game from starting: if the context
+  // cannot be created the round still runs, just silently.
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    actx.resume().catch(() => {});
+    decodeClips();
+  } catch (e) { console.warn('sem audio:', e); }
 
   // The canvas is hidden by the shared stylesheet because the headset
   // build draws into the XR layer, not into the page. Here it IS the game.
