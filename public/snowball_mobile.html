@@ -622,7 +622,8 @@ function relayState(now) {
   for (const t of targets) {
     if (!t) continue;
     tg.push([r2(t.group.position.x), r2(t.group.position.y), r2(t.group.position.z),
-      TIERS.indexOf(t.tier), t.dead ? 1 : 0]);
+      TIERS.indexOf(t.tier), t.dead ? 1 : 0,
+      t.group.userData.variante ?? -1, r2(t.group.rotation.y)]);
   }
   try {
     relaySock.send(JSON.stringify({
@@ -811,21 +812,61 @@ const CENARIO = [
   { f: 'lantern.glb', n:  3, alt: 2.3, r0:  7, r1: 13, girar: false }
 ];
 
-// Angles are dealt out once so nothing lands on top of anything else, and
-// a wedge in front of the player is left clear: that is where he throws.
+// ── A REPEATABLE WORLD ────────────────────────────────────
+// The layout is worked out from a fixed seed, in a fixed order, BEFORE
+// anything is loaded. Two reasons. Models arrive over the network in
+// whatever order they finish, so placing them inside their load callbacks
+// made the world different on every visit. And the spectator screen runs
+// this same block with this same seed, which is the only way it can show
+// the same forest the player is standing in.
+const SEMENTE_MUNDO = 20261225;
+function geradorSemeado(s) {
+  return function () {
+    s |= 0; s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 const ocupados = [];
-// Where the scenery actually ended up, so the snowmen can be told to
-// float past the trees instead of through them.
-const obstaculos = [];      // { x, z, raio }
-function anguloLivre(minSep) {
-  for (let t = 0; t < 40; t++) {
-    const a = Math.random() * Math.PI * 2;
-    if (Math.abs(((a + Math.PI) % (Math.PI * 2)) - Math.PI) < 0.5) continue;  // keep the front open
-    if (ocupados.every(o => Math.abs(((a - o + Math.PI * 3) % (Math.PI * 2)) - Math.PI) > minSep)) {
-      ocupados.push(a); return a;
+const obstaculos = [];      // { x, z, raio } — what the snowmen must avoid
+const PLANTA = {};          // file -> [{ x, z, rot, mul }]
+
+{
+  const rnd = geradorSemeado(SEMENTE_MUNDO);
+  const anguloLivre = (minSep) => {
+    for (let t = 0; t < 40; t++) {
+      const a = rnd() * Math.PI * 2;
+      // Leave a wedge open dead ahead: that is where the throwing happens.
+      if (Math.abs(((a + Math.PI) % (Math.PI * 2)) - Math.PI) < 0.5) continue;
+      if (ocupados.every(o => Math.abs(((a - o + Math.PI * 3) % (Math.PI * 2)) - Math.PI) > minSep)) {
+        ocupados.push(a); return a;
+      }
     }
+    const a = rnd() * Math.PI * 2; ocupados.push(a); return a;
+  };
+  for (const item of CENARIO) {
+    const lista = [];
+    for (let i = 0; i < item.n; i++) {
+      const a = anguloLivre(item.n > 8 ? 0.10 : 0.35);
+      const r = item.r0 + rnd() * (item.r1 - item.r0);
+      const mul = item.n > 1 ? 0.80 + rnd() * 0.5 : 1;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      // Fences, lanterns and the cabin face the middle; trees and rocks are
+      // turned at random so two clones never read as the same object.
+      const rot = item.girar ? rnd() * Math.PI * 2 : Math.atan2(-x, -z);
+      lista.push({ x, z, rot, mul });
+      // Trunk-sized footprint: only the solid part matters, since the
+      // canopy is above everything that flies.
+      if (item.f.startsWith('tree') || item.f === 'pine.glb') {
+        obstaculos.push({ x, z, raio: 1.5 * mul });
+      } else if (item.f === 'cabin.glb') {
+        obstaculos.push({ x, z, raio: 3.2 });
+      }
+    }
+    PLANTA[item.f] = lista;
   }
-  const a = Math.random() * Math.PI * 2; ocupados.push(a); return a;
 }
 
 {
@@ -888,34 +929,24 @@ function anguloLivre(minSep) {
       mat.emissiveIntensity = 0.20;
       mat.needsUpdate = true;
 
-      const grupo = new THREE.InstancedMesh(geo, mat, item.n);
+      const planta = PLANTA[item.f] || [];
+      const grupo = new THREE.InstancedMesh(geo, mat, planta.length);
       const m4 = new THREE.Matrix4(), q = new THREE.Quaternion();
       const pos = new THREE.Vector3(), esc = new THREE.Vector3();
       const eixoY = new THREE.Vector3(0, 1, 0);
-      for (let i = 0; i < item.n; i++) {
-        const a = anguloLivre(item.n > 8 ? 0.10 : 0.35);
-        const r = item.r0 + Math.random() * (item.r1 - item.r0);
-        const k = base * (item.n > 1 ? 0.80 + Math.random() * 0.5 : 1);
-        pos.set(Math.cos(a) * r, 0, Math.sin(a) * r);
-        // Fences, lanterns and the cabin face the middle; trees and rocks
-        // are turned at random so no two clones read as the same object.
-        const face = Math.atan2(-pos.x, -pos.z);
-        q.setFromAxisAngle(eixoY, item.girar ? Math.random() * Math.PI * 2 : face);
+      for (let i = 0; i < planta.length; i++) {
+        const p = planta[i];
+        const k = base * p.mul;
+        pos.set(p.x, 0, p.z);
+        q.setFromAxisAngle(eixoY, p.rot);
         esc.set(k, k, k);
         grupo.setMatrixAt(i, m4.compose(pos, q, esc));
-        // Trunk-sized footprint: only the solid part matters, the canopy
-        // is above everything that flies.
-        if (item.f.startsWith('tree') || item.f === 'pine.glb') {
-          obstaculos.push({ x: pos.x, z: pos.z, raio: 1.5 * k / base });
-        } else if (item.f === 'cabin.glb') {
-          obstaculos.push({ x: pos.x, z: pos.z, raio: 3.2 });
-        }
 
         // Lanterns and the cabin carry the warm light of the reference.
         if (item.f === 'lantern.glb') {
-          acenderLuz(pos.x, item.alt * 0.82, pos.z, 0xffb066, 5, 9);
+          acenderLuz(p.x, item.alt * 0.82, p.z, 0xffb066, 5, 9);
         } else if (item.f === 'cabin.glb') {
-          acenderLuz(pos.x * 0.86, 2.0, pos.z * 0.86, 0xffc07a, 16, 24);
+          acenderLuz(p.x * 0.86, 2.0, p.z * 0.86, 0xffc07a, 16, 24);
         }
       }
       grupo.instanceMatrix.needsUpdate = true;
@@ -1690,6 +1721,7 @@ function spawnTarget(i) {
   const group = new THREE.Group();
 
   const variante = pickSnowman();
+  group.userData.variante = variante ? snowVariants.indexOf(variante) : -1;
   if (variante) {
     // A random one of the four, cloned (geometry and material are shared),
     // recentred — its pivot sits half a metre behind the mesh — and scaled

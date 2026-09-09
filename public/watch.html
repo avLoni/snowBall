@@ -163,16 +163,85 @@ function materialCena(raiz) {
   });
 }
 
-// ── scenery ring, laid out the same way the game does it ──
+// ── scenery ──
+// Copied verbatim from the game, seed and all. Anything less than an exact
+// copy and the spectator is looking at a different forest, which is what
+// was happening before: both sides rolled their own dice.
 const CENARIO = [
-  ['pine.glb', 14, 3.8, 13, 30], ['tree_a.glb', 12, 4.2, 12, 29],
-  ['tree_b.glb', 10, 3.4, 14, 30], ['tree_c.glb', 10, 3.9, 13, 28],
-  ['rocks.glb', 8, 0.9, 8, 20],   ['log.glb', 3, 0.7, 9, 16],
-  ['fence.glb', 6, 1.1, 7, 12],   ['lantern.glb', 3, 2.3, 8, 13],
-  ['cabin.glb', 1, 4.0, 16, 16]
+  // file, count, height in metres, ring radius min/max, random tilt
+  { f: 'pine.glb',    n: 16, alt: 3.8, r0: 13, r1: 30, girar: true },
+  { f: 'tree_a.glb',  n: 14, alt: 4.2, r0: 12, r1: 29, girar: true },
+  { f: 'tree_b.glb',  n: 12, alt: 3.4, r0: 14, r1: 30, girar: true },
+  { f: 'tree_c.glb',  n: 12, alt: 3.9, r0: 13, r1: 28, girar: true },
+  { f: 'rocks.glb',   n:  9, alt: 0.9, r0:  7, r1: 20, girar: true },
+  { f: 'log.glb',     n:  3, alt: 0.7, r0:  8, r1: 16, girar: true },
+  { f: 'fence.glb',   n:  7, alt: 1.1, r0:  6, r1: 11, girar: false },
+  // Cabin first: it claims one of the four reserved lights before the
+  // lanterns take the rest.
+  { f: 'cabin.glb',   n:  1, alt: 4.0, r0: 15, r1: 15, girar: false },
+  { f: 'lantern.glb', n:  3, alt: 2.3, r0:  7, r1: 13, girar: false }
 ];
-for (const [ficheiro, n, alt, r0, r1] of CENARIO) {
-  new GLTFLoader().load(ficheiro, (gltf) => {
+
+// ── A REPEATABLE WORLD ────────────────────────────────────
+// The layout is worked out from a fixed seed, in a fixed order, BEFORE
+// anything is loaded. Two reasons. Models arrive over the network in
+// whatever order they finish, so placing them inside their load callbacks
+// made the world different on every visit. And the spectator screen runs
+// this same block with this same seed, which is the only way it can show
+// the same forest the player is standing in.
+const SEMENTE_MUNDO = 20261225;
+function geradorSemeado(s) {
+  return function () {
+    s |= 0; s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const ocupados = [];
+const obstaculos = [];      // { x, z, raio } — what the snowmen must avoid
+const PLANTA = {};          // file -> [{ x, z, rot, mul }]
+
+{
+  const rnd = geradorSemeado(SEMENTE_MUNDO);
+  const anguloLivre = (minSep) => {
+    for (let t = 0; t < 40; t++) {
+      const a = rnd() * Math.PI * 2;
+      // Leave a wedge open dead ahead: that is where the throwing happens.
+      if (Math.abs(((a + Math.PI) % (Math.PI * 2)) - Math.PI) < 0.5) continue;
+      if (ocupados.every(o => Math.abs(((a - o + Math.PI * 3) % (Math.PI * 2)) - Math.PI) > minSep)) {
+        ocupados.push(a); return a;
+      }
+    }
+    const a = rnd() * Math.PI * 2; ocupados.push(a); return a;
+  };
+  for (const item of CENARIO) {
+    const lista = [];
+    for (let i = 0; i < item.n; i++) {
+      const a = anguloLivre(item.n > 8 ? 0.10 : 0.35);
+      const r = item.r0 + rnd() * (item.r1 - item.r0);
+      const mul = item.n > 1 ? 0.80 + rnd() * 0.5 : 1;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      // Fences, lanterns and the cabin face the middle; trees and rocks are
+      // turned at random so two clones never read as the same object.
+      const rot = item.girar ? rnd() * Math.PI * 2 : Math.atan2(-x, -z);
+      lista.push({ x, z, rot, mul });
+      // Trunk-sized footprint: only the solid part matters, since the
+      // canopy is above everything that flies.
+      if (item.f.startsWith('tree') || item.f === 'pine.glb') {
+        obstaculos.push({ x, z, raio: 1.5 * mul });
+      } else if (item.f === 'cabin.glb') {
+        obstaculos.push({ x, z, raio: 3.2 });
+      }
+    }
+    PLANTA[item.f] = lista;
+  }
+}
+
+
+for (const item of CENARIO) {
+  new GLTFLoader().load(item.f, (gltf) => {
     let fonte = null;
     gltf.scene.updateWorldMatrix(true, true);
     gltf.scene.traverse(o => { if (o.isMesh && !fonte) fonte = o; });
@@ -182,21 +251,29 @@ for (const [ficheiro, n, alt, r0, r1] of CENARIO) {
     geo.computeBoundingBox();
     const bb = geo.boundingBox;
     geo.translate(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
-    const base = alt / Math.max(bb.max.y - bb.min.y, 0.01);
+    const base = item.alt / Math.max(bb.max.y - bb.min.y, 0.01);
     const env = new THREE.Object3D(); env.add(fonte);
     materialCena(env);
-    const grupo = new THREE.InstancedMesh(geo, fonte.material, n);
+    const planta = PLANTA[item.f] || [];
+    const grupo = new THREE.InstancedMesh(geo, fonte.material, planta.length);
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion();
     const pos = new THREE.Vector3(), esc = new THREE.Vector3();
-    const eixo = new THREE.Vector3(0, 1, 0);
-    for (let i = 0; i < n; i++) {
-      const a = (i / n) * Math.PI * 2 + Math.random() * 0.3;
-      const r = r0 + Math.random() * (r1 - r0);
-      const k = base * (n > 1 ? 0.8 + Math.random() * 0.5 : 1);
-      pos.set(Math.cos(a) * r, 0, Math.sin(a) * r);
-      q.setFromAxisAngle(eixo, Math.random() * Math.PI * 2);
+    const eixoY = new THREE.Vector3(0, 1, 0);
+    for (let i = 0; i < planta.length; i++) {
+      const p = planta[i];
+      const k = base * p.mul;
+      pos.set(p.x, 0, p.z);
+      q.setFromAxisAngle(eixoY, p.rot);
       esc.set(k, k, k);
       grupo.setMatrixAt(i, m4.compose(pos, q, esc));
+      if (item.f === 'lantern.glb' || item.f === 'cabin.glb') {
+        const luz = new THREE.PointLight(item.f === 'cabin.glb' ? 0xffc07a : 0xffb066,
+          item.f === 'cabin.glb' ? 16 : 5, item.f === 'cabin.glb' ? 24 : 9, 2);
+        luz.position.set(p.x * (item.f === 'cabin.glb' ? 0.86 : 1),
+                         item.f === 'cabin.glb' ? 2.0 : item.alt * 0.82,
+                         p.z * (item.f === 'cabin.glb' ? 0.86 : 1));
+        cena.add(luz);
+      }
     }
     grupo.instanceMatrix.needsUpdate = true;
     grupo.frustumCulled = false;
@@ -231,15 +308,18 @@ jogador.position.y = 0.02;
 cena.add(jogador);
 
 // ── snowmen and snowballs, pooled ──
-const modelosNeve = [];
-for (const f of ['snowman1.glb', 'snowman2.glb', 'snowman3.glb', 'snowman4.glb']) {
+// Indexed by file order, NOT by arrival order: the game sends which of the
+// four a given snowman is, and that number has to mean the same thing here.
+const FICHEIROS_NEVE = ['snowman1.glb', 'snowman2.glb', 'snowman3.glb', 'snowman4.glb'];
+const modelosNeve = new Array(FICHEIROS_NEVE.length).fill(null);
+FICHEIROS_NEVE.forEach((f, idx) => {
   new GLTFLoader().load(f, (gltf) => {
     materialCena(gltf.scene);
     const caixa = new THREE.Box3().setFromObject(gltf.scene);
-    modelosNeve.push({ raiz: gltf.scene, alt: Math.max(caixa.max.y - caixa.min.y, 0.01),
-                       centro: caixa.getCenter(new THREE.Vector3()), minY: caixa.min.y });
+    modelosNeve[idx] = { raiz: gltf.scene, alt: Math.max(caixa.max.y - caixa.min.y, 0.01),
+                         centro: caixa.getCenter(new THREE.Vector3()), minY: caixa.min.y };
   }, undefined, () => {});
-}
+});
 
 const RAIOS = [0.78, 0.52, 0.36];
 const alvos = [];
@@ -254,16 +334,21 @@ function alvoEm(i) {
   alvos[i] = g;
   return g;
 }
-function vestirAlvo(g, escala) {
-  if (!modelosNeve.length || g.userData.vestido) return;
-  const v = modelosNeve[(Math.random() * modelosNeve.length) | 0];
+function vestirAlvo(g, escala, indice) {
+  if (g.userData.vestido === indice) return;
+  const v = modelosNeve[indice];
+  if (!v) return;                       // that one has not loaded yet
+  if (g.userData.vestido !== undefined && g.userData.corpo) {
+    g.remove(g.userData.corpo);         // a respawn may be a different one
+  }
   const c = v.raiz.clone();
   const s = escala * 2.35 / v.alt;
   c.scale.setScalar(s);
   c.position.set(-v.centro.x * s, -v.minY * s, -v.centro.z * s);
-  g.remove(g.userData.esfera);
+  if (g.userData.esfera) { g.remove(g.userData.esfera); g.userData.esfera = null; }
   g.add(c);
-  g.userData.vestido = true;
+  g.userData.corpo = c;
+  g.userData.vestido = indice;
 }
 
 const bolas = [];
@@ -553,15 +638,17 @@ function desenhar() {
     // targets
     const tg = actual.tg || [];
     for (let i = 0; i < tg.length; i++) {
-      const [x, y, z, tier, morto] = tg[i];
+      const [x, y, z, tier, morto, variante, giroY] = tg[i];
       const g = alvoEm(i);
       const escala = RAIOS[tier] || 0.5;
-      vestirAlvo(g, escala);
-      if (!g.userData.vestido) g.userData.esfera.scale.setScalar(escala);
+      if (variante >= 0) vestirAlvo(g, escala, variante);
+      if (g.userData.esfera) g.userData.esfera.scale.setScalar(escala);
       const ta = (a.tg && a.tg[i]) || tg[i];
       g.position.set(misturar(ta[0], x, k), misturar(ta[1], y, k), misturar(ta[2], z, k));
       g.visible = !morto;
-      g.rotation.y += dt * 0.3;
+      // Facing comes down the wire too. Spinning them here made every one
+      // of them look the wrong way at every moment.
+      if (giroY != null) g.rotation.y = giroY;
     }
     for (let i = tg.length; i < alvos.length; i++) if (alvos[i]) alvos[i].visible = false;
 
