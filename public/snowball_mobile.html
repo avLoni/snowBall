@@ -131,17 +131,14 @@
   <div style="color:#8fa0c0;font-weight:500;font-size:15px">O jogo é feito para ecrã deitado.</div>
 </div>
 
-<div id="mira" style="display:none;position:fixed;inset:0;pointer-events:none;z-index:10">
-  <svg viewBox="0 0 100 100" style="position:absolute;left:50%;top:50%;width:74px;height:74px;transform:translate(-50%,-50%)">
-    <circle cx="50" cy="50" r="26" fill="none" stroke="rgba(255,255,255,.72)" stroke-width="2.5"/>
-    <circle cx="50" cy="50" r="2.6" fill="rgba(255,255,255,.92)"/>
-    <path d="M50 12v10M50 78v10M12 50h10M78 50h10" stroke="rgba(255,255,255,.72)" stroke-width="2.5"/>
-  </svg>
-  <div style="position:absolute;left:0;right:0;bottom:26px;text-align:center;
-              font:600 15px ui-rounded,-apple-system,sans-serif;color:rgba(255,255,255,.65);
-              text-shadow:0 1px 4px rgba(0,0,0,.7)">
-    <span id="dica">move o telemóvel para apontar · toca para disparar</span>
-  </div>
+<!-- The sight is the ring on the ground, not a mark on the glass: the view
+     no longer follows the barrel, so a fixed crosshair would point at sky.
+     What stays here is the caption. -->
+<div id="legenda" style="display:none;position:fixed;left:0;right:0;bottom:22px;
+     text-align:center;pointer-events:none;z-index:10;
+     font:600 15px ui-rounded,-apple-system,sans-serif;color:rgba(255,255,255,.7);
+     text-shadow:0 1px 4px rgba(0,0,0,.75)">
+  <span id="dica">cursor para apontar · botão para atirar</span>
 </div>
 <main>
   <a class="back" href="index.html">&larr; Todas as experiências</a>
@@ -1211,7 +1208,9 @@ const arcMat = new THREE.PointsMaterial({
 const arc = new THREE.Points(arcGeo, arcMat);
 scene.add(arc);
 
-const impactRing = new THREE.Mesh(new THREE.RingGeometry(0.16, 0.21, 28),
+// Bigger and brighter than in the headset: on a phone this ring is the
+// sight, not a hint, and it has to be readable at twenty metres.
+const impactRing = new THREE.Mesh(new THREE.RingGeometry(0.30, 0.42, 32),
   new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.8, side: THREE.DoubleSide }));
 impactRing.rotation.x = -Math.PI / 2;
 impactRing.visible = false;
@@ -3407,6 +3406,22 @@ function aimCannonJoystick(dt) {
 // Here the whole cannon is swung about the eye instead. The post ends up
 // wherever it needs to be for the muzzle to sit under the crosshair, which
 // is what a first-person view means.
+// ── WHERE YOU LOOK vs WHERE YOU AIM ──────────────────────
+// A cannon lobs. To reach the far snowmen the barrel has to point well
+// up \u2014 and if the view follows it, the player spends the shot staring at
+// empty sky with the arena out of frame. Real artillery does not work that
+// way either: the gunner watches the field while the tube elevates.
+//
+// So the camera only leans a little of the way, and the ring already drawn
+// where the ball will land becomes the real sight. The crosshair at the
+// centre of the screen was the misleading part and is switched off.
+const OLHAR_FRACCAO = 0.32;      // how much of the elevation the view takes
+const OLHAR_MIN = -0.30, OLHAR_MAX = 0.20;
+
+function olharDe(p) {
+  return THREE.MathUtils.clamp(p * OLHAR_FRACCAO, OLHAR_MIN, OLHAR_MAX);
+}
+
 function aplicarPontaria(p, y) {
   yaw = yawTarget = y;
   pitch = pitchTarget = p;
@@ -3421,19 +3436,20 @@ function aplicarPontaria(p, y) {
   cannonAssembly.position.set(camera.position.x, 0, camera.position.z);
   cannonAssembly.rotation.y = y;
 
-  camera.rotation.set(p, y, 0, 'YXZ');
+  // The barrel keeps the full angle; the view keeps the arena in frame.
+  camera.rotation.set(olharDe(p), y, 0, 'YXZ');
 }
 
 function aimCannonTelemovel() {
   // One angle for both, clamped once, applied without smoothing: any lag
   // between the two shows up as the barrel drifting off the crosshair
   // whenever the phone moves.
-  // The barrel fires along the pitchGroup's local −Z and the camera looks
-  // along its own −Z, so the two need the SAME rotation, not opposite
-  // ones. With the sign flipped, tipping the phone down raised the gun.
-  aplicarPontaria(
-    THREE.MathUtils.clamp(telemovel.pitch, PITCH_MIN_MOVEL, PITCH_MAX_MOVEL),
-    telemovel.yaw);
+  // A gentle tilt of the handset covers the whole elevation range, so the
+  // player never has to point the phone at the ceiling to reach the back
+  // of the field.
+  const t = THREE.MathUtils.clamp(telemovel.pitch / 0.42, -1, 1);
+  const p = t >= 0 ? t * PITCH_MAX_MOVEL : -t * PITCH_MIN_MOVEL;
+  aplicarPontaria(p, telemovel.yaw);
 }
 
 function aimCannon() {
@@ -3907,7 +3923,10 @@ enterBtn.addEventListener('click', () => {
     ligarGiro();
     ligarArrasto(renderer.domElement);
   }
-  document.getElementById('mira').style.display = 'block';
+  // The sight is the landing ring on the snow. A crosshair fixed to the
+  // middle of the screen would point at whatever the view happens to be
+  // looking at, which is no longer where the ball goes.
+  document.getElementById('legenda').style.display = 'block';
   document.getElementById('dica').textContent = modoJoystick
     ? 'cursor para apontar \u00b7 bot\u00e3o para atirar'
     : 'move o telem\u00f3vel para apontar \u00b7 toca para disparar';
