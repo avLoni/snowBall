@@ -238,6 +238,13 @@ const RELAY_WS = RELAY_OK ? RELAY_BASE.replace(/^http/, 'ws') + '/ws' : null;
 // ═══════════════════════════════════════════════════════════
 //  TUNING
 // ═══════════════════════════════════════════════════════════
+let aguardaOperador = false;
+// Separate from aguardaOperador on purpose. The mode says "the operator
+// owns the starts"; this says "right now, nothing has started yet". Tying
+// the waiting panel to game.running instead made it depend on a value half
+// a dozen other things also write to, and it stopped clearing.
+let emEspera = false;
+
 const CFG = {
   muzzleSpeed:   15,
   superSpeed:    13.5,
@@ -605,6 +612,7 @@ function aplicarComando(cmd, valor) {
       // which is what the operator means when the next child steps up.
       if (mode === 'calibrating') { mode = 'playing'; beginPlay(); }
       resetGame(agora);
+      emEspera = false;          // cleared here and nowhere else
       game.running = true;
       capturarFrente();
       break;
@@ -640,9 +648,12 @@ function relayState(now) {
   if (now - relayLast < 1000 / CFG.relayHz) return;
   relayLast = now;
 
+  // The sixth number says whose ball it is. On the spectator screen the
+  // gingerbread's throws were indistinguishable from the player's and got
+  // lost among them; now they can be coloured differently.
   const balls = snowballs.map(b => [
     r2(b.mesh.position.x), r2(b.mesh.position.y), r2(b.mesh.position.z),
-    r2(b.radius), b.blast > 0 ? 1 : 0]);
+    r2(b.radius), b.blast > 0 ? 1 : 0, b.hostile ? 1 : 0]);
   const tg = [];
   for (const t of targets) {
     if (!t) continue;
@@ -1242,7 +1253,7 @@ function drawHUD() {
 
   // Waiting for the operator. Without this the headset shows a live arena
   // with a frozen clock, which reads as broken rather than as ready.
-  if (aguardaOperador && !game.running && !game.finished) {
+  if (emEspera) {
     ctx.fillStyle = 'rgba(10,20,40,0.94)';
     ctx.beginPath(); ctx.roundRect(0, 0, W, H, 44); ctx.fill();
     ctx.strokeStyle = '#4dd6ff'; ctx.lineWidth = 7;
@@ -3238,16 +3249,24 @@ function ligarArrasto(el) {
   el.addEventListener('mouseup',    () => { telemovel.arrasto = false; });
 }
 
+// On a phone the crosshair IS the barrel, so the two must agree exactly.
+// They did not: the camera took the device pitch and the barrel took its
+// negative, which pointed the gun down as you raised the handset. The old
+// lower limit of +0.05 rad hid it — the wrong-way values were clipped to
+// roughly horizontal — until the limit dropped to −0.42 and let the
+// barrel really swing the wrong way.
+const PITCH_MIN_MOVEL = -0.85, PITCH_MAX_MOVEL = 1.05;
+
 function aimCannonTelemovel() {
-  yawTarget = telemovel.yaw;
-  // Device pitch maps straight onto barrel elevation, held inside the
-  // cannon's own limits so it cannot fold under itself.
-  pitchTarget = THREE.MathUtils.clamp(-telemovel.pitch, CFG.pitchMin, CFG.pitchMax);
-  yaw   += (yawTarget   - yaw)   * 0.35;
-  pitch += (pitchTarget - pitch) * 0.35;
+  // One angle for both, clamped once, applied without smoothing: any lag
+  // between the two shows up as the barrel drifting off the crosshair
+  // whenever the phone moves.
+  const p = THREE.MathUtils.clamp(telemovel.pitch, PITCH_MIN_MOVEL, PITCH_MAX_MOVEL);
+  yaw = yawTarget = telemovel.yaw;
+  pitch = pitchTarget = p;
   yawGroup.rotation.y = yaw;
   pitchGroup.rotation.x = -pitch;
-  camera.rotation.set(telemovel.pitch, telemovel.yaw, 0, 'YXZ');
+  camera.rotation.set(p, telemovel.yaw, 0, 'YXZ');
 }
 
 function aimCannon() {
@@ -3497,7 +3516,7 @@ function buildDiag() {
 // ═══════════════════════════════════════════════════════════
 // With this on, the page can sit loaded all afternoon while children swap
 // over, and each round begins only when the operator says so.
-let aguardaOperador = false;
+
 
 let hudTimer = 0;
 let currentSession = null;
@@ -3624,7 +3643,7 @@ function desenharFrame() {
       hudPanel.mesh.visible = false;
       const esp = document.getElementById('esperaMovel');
       if (esp) {
-        const aEsperar = aguardaOperador && !game.running && !game.finished;
+        const aEsperar = emEspera;
         esp.style.display = aEsperar ? 'flex' : 'none';
         if (aEsperar) {
           const ligado = relaySock && relaySock.readyState === 1;
@@ -3659,6 +3678,7 @@ enterBtn.addEventListener('click', () => {
   statusEl.textContent = '';
   game.name = (nameInput.value || '').trim().slice(0, 14) || 'Anon';
   aguardaOperador = document.getElementById('esperaBox').checked;
+  emEspera = aguardaOperador;
 
   // Audio must never be able to stop the game from starting: if the context
   // cannot be created the round still runs, just silently.

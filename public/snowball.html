@@ -190,6 +190,13 @@ const RELAY_WS = RELAY_OK ? RELAY_BASE.replace(/^http/, 'ws') + '/ws' : null;
 // ═══════════════════════════════════════════════════════════
 //  TUNING
 // ═══════════════════════════════════════════════════════════
+let aguardaOperador = false;
+// Separate from aguardaOperador on purpose. The mode says "the operator
+// owns the starts"; this says "right now, nothing has started yet". Tying
+// the waiting panel to game.running instead made it depend on a value half
+// a dozen other things also write to, and it stopped clearing.
+let emEspera = false;
+
 const CFG = {
   muzzleSpeed:   15,
   superSpeed:    13.5,
@@ -557,6 +564,7 @@ function aplicarComando(cmd, valor) {
       // which is what the operator means when the next child steps up.
       if (mode === 'calibrating') { mode = 'playing'; beginPlay(); }
       resetGame(agora);
+      emEspera = false;          // cleared here and nowhere else
       game.running = true;
       capturarFrente();
       break;
@@ -592,9 +600,12 @@ function relayState(now) {
   if (now - relayLast < 1000 / CFG.relayHz) return;
   relayLast = now;
 
+  // The sixth number says whose ball it is. On the spectator screen the
+  // gingerbread's throws were indistinguishable from the player's and got
+  // lost among them; now they can be coloured differently.
   const balls = snowballs.map(b => [
     r2(b.mesh.position.x), r2(b.mesh.position.y), r2(b.mesh.position.z),
-    r2(b.radius), b.blast > 0 ? 1 : 0]);
+    r2(b.radius), b.blast > 0 ? 1 : 0, b.hostile ? 1 : 0]);
   const tg = [];
   for (const t of targets) {
     if (!t) continue;
@@ -1200,7 +1211,7 @@ function drawHUD() {
 
   // Waiting for the operator. Without this the headset shows a live arena
   // with a frozen clock, which reads as broken rather than as ready.
-  if (aguardaOperador && !game.running && !game.finished) {
+  if (emEspera) {
     ctx.fillStyle = 'rgba(10,20,40,0.94)';
     ctx.beginPath(); ctx.roundRect(0, 0, W, H, 44); ctx.fill();
     ctx.strokeStyle = '#4dd6ff'; ctx.lineWidth = 7;
@@ -3384,7 +3395,7 @@ function buildDiag() {
 // With this on, the page can sit loaded in the headset all afternoon
 // while children swap over, and each round begins only when the operator
 // says so. Without it the game starts by itself, as it always did.
-let aguardaOperador = false;
+
 
 let hudTimer = 0;
 let currentSession = null;
@@ -3515,6 +3526,7 @@ enterBtn.addEventListener('click', () => {
   statusEl.textContent = '';
   game.name = (nameInput.value || '').trim().slice(0, 14) || 'Anon';
   aguardaOperador = document.getElementById('esperaBox').checked;
+  emEspera = aguardaOperador;
 
   const wantAR = arAvailable && document.getElementById('arBox').checked;
   const sessionPromise = navigator.xr.requestSession(

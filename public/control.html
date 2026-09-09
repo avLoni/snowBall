@@ -19,8 +19,8 @@
      same world, drawn with that player's actors and their own camera. */
   #grelha { position:fixed; inset:0; z-index:1; display:grid; gap:8px; padding:8px;
     grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; }
-  #grelha.um    { grid-template-columns:1fr; grid-template-rows:1fr; }
-  #grelha.dois  { grid-template-columns:1fr 1fr; grid-template-rows:1fr; }
+  .quadro.vaga { border-style:dashed; opacity:.4; }
+  .quadro.vaga .estadoQ { color:var(--suave); }
   #grelha.cheio { grid-template-columns:1fr; grid-template-rows:1fr; }
 
   .quadro { position:relative; border:1px solid var(--linha); border-radius:14px;
@@ -354,6 +354,10 @@ const RAIOS = [0.78, 0.52, 0.36];
 const geoBola = new THREE.SphereGeometry(1, 14, 10);
 const matBola = new THREE.MeshLambertMaterial({ color: 0xf4f8ff,
   emissive: 0x8fb6ff, emissiveIntensity: 0.25 });
+// The gingerbread's throws glow warm, so an operator can tell at a glance
+// who is shooting at whom.
+const matBolaInimiga = new THREE.MeshLambertMaterial({ color: 0xffd9a8,
+  emissive: 0xff9a3c, emissiveIntensity: 0.55 });
 
 // ═══════════════════════════════════════════════════════════
 //  ONE SET OF ACTORS PER PLAYER
@@ -502,8 +506,21 @@ function arrumarGrelha() {
   // simply have no pane until one frees up. Four 3D views is already
   // generous for a laptop.
   const visiveis = ids.slice(0, MAX_QUADROS);
-  const n = visiveis.length;
-  g.className = maximizado ? 'cheio' : (n <= 1 ? 'um' : (n === 2 ? 'dois' : ''));
+  // Always four places, even with one player. An operator watching a queue
+  // wants the layout to stay put as people come and go, not to reflow
+  // under them every time somebody puts a headset down.
+  g.className = maximizado ? 'cheio' : '';
+  for (let i = 0; i < MAX_QUADROS; i++) {
+    let vazio = document.getElementById('vaga' + i);
+    if (!vazio) {
+      vazio = document.createElement('div');
+      vazio.id = 'vaga' + i;
+      vazio.className = 'quadro vaga';
+      vazio.innerHTML = '<div class="estadoQ">lugar livre</div>';
+      g.appendChild(vazio);
+    }
+    vazio.classList.toggle('oculto', !!maximizado || i < visiveis.length);
+  }
   for (const [id, f] of feeds) {
     if (!f.ui) continue;
     const cabe = visiveis.includes(id);
@@ -511,6 +528,17 @@ function arrumarGrelha() {
     f.ui.el.classList.toggle('oculto', !!escondido);
     f.ui.el.classList.toggle('activo', maximizado === id);
   }
+  // Real panes first, empty places after, so a new arrival takes the next
+  // free slot instead of jumping to the end.
+  for (const id of visiveis) {
+    const f = feeds.get(id);
+    if (f && f.ui) g.appendChild(f.ui.el);
+  }
+  for (let i = 0; i < MAX_QUADROS; i++) {
+    const v = document.getElementById('vaga' + i);
+    if (v) g.appendChild(v);
+  }
+
   const extra = ids.length - MAX_QUADROS;
   $('excedente').textContent = extra > 0
     ? `mais ${extra} dispositivo${extra > 1 ? 's' : ''} ligado${extra > 1 ? 's' : ''}, sem quadro` : '';
@@ -634,10 +662,14 @@ function actualizarActores(f, dt) {
   const bs = d.balls || [];
   for (let i = 0; i < bs.length; i++) {
     if (!A.bolas[i]) { A.bolas[i] = new THREE.Mesh(geoBola, matBola); A.raiz.add(A.bolas[i]); }
-    const [x, y, z, r] = bs[i];
-    A.bolas[i].position.set(x, y, z);
-    A.bolas[i].scale.setScalar(r);
-    A.bolas[i].visible = true;
+    const [x, y, z, r, , inimiga] = bs[i];
+    const b = A.bolas[i];
+    b.material = inimiga ? matBolaInimiga : matBola;
+    b.position.set(x, y, z);
+    // A 9 cm ball at fifteen metres is a couple of pixels. The
+    // gingerbread's are drawn larger than life so they can be followed.
+    b.scale.setScalar(r * (inimiga ? 2.2 : 1.4));
+    b.visible = true;
   }
   for (let i = bs.length; i < A.bolas.length; i++) if (A.bolas[i]) A.bolas[i].visible = false;
 
