@@ -3398,11 +3398,29 @@ function aimCannonJoystick(dt) {
   aplicarPontaria(telemovel.pitch, telemovel.yaw);
 }
 
+// The cannon turns about its own post, which stands 95 cm in FRONT of the
+// player. In a headset that is right — it is a real object planted in the
+// snow, and you can look away from it. On a phone the camera turns about
+// itself, so the two swept different arcs and the barrel slid off to one
+// side of the crosshair: the parallax you could see.
+//
+// Here the whole cannon is swung about the eye instead. The post ends up
+// wherever it needs to be for the muzzle to sit under the crosshair, which
+// is what a first-person view means.
 function aplicarPontaria(p, y) {
   yaw = yawTarget = y;
   pitch = pitchTarget = p;
-  yawGroup.rotation.y = y;
+
+  // Local yaw stays at zero: the assembly itself carries the turn.
+  yawGroup.rotation.y = 0;
   pitchGroup.rotation.x = p;
+
+  // Put the assembly ON the eye and turn it. The post sits at PIVOT within
+  // the assembly, so after the turn it lands exactly 95 cm along the line
+  // of sight — every time, at every angle.
+  cannonAssembly.position.set(camera.position.x, 0, camera.position.z);
+  cannonAssembly.rotation.y = y;
+
   camera.rotation.set(p, y, 0, 'YXZ');
 }
 
@@ -3609,16 +3627,13 @@ function respawnTargets(now) {
 // ═══════════════════════════════════════════════════════════
 //  COACHING & PANELS
 // ═══════════════════════════════════════════════════════════
+// Every line here used to be about thumbs and fists. On a phone the only
+// thing worth saying is what the gingerbread shouts, and even that reads
+// better on the glass than floating in the arena.
 function updateCoach(now) {
-  if (mode !== 'playing') { drawCoach(''); return; }
-  if (game.finished) { drawCoach('Pressiona o polegar para jogar de novo'); return; }
-  if (superState.charging) { drawCoach('A formar… solta os polegares'); return; }
+  if (mode !== 'playing' || game.finished) { drawCoach(''); return; }
   if (now < elfMsg.until) { drawCoach(elfMsg.text); return; }
-  const anyHand = handSlots.some(s => s.active);
-  if (!anyHand) drawCoach('Estica as duas mãos à tua frente');
-  else if (!game.everFired) drawCoach('Polegar para cima 👍 e pressiona contra o punho');
-  else if (!game.everStormed) drawCoach('Junta os punhos, polegares para baixo = tempestade');
-  else drawCoach('');
+  drawCoach('');
 }
 
 const headYawQuat = new THREE.Quaternion();
