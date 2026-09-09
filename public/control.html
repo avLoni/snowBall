@@ -48,6 +48,16 @@
     font:inherit; pointer-events:auto; }
   .nomeIn:focus { outline:none; border-color:var(--azul); }
 
+  /* The player just took one in the face. In the headset the world goes
+     white and the snow slides down; here the pane does the same, so the
+     operator sees the hit rather than having to infer it from the score. */
+  .quadro .splat { position:absolute; inset:0; pointer-events:none; opacity:0;
+    background:radial-gradient(circle at 50% 42%, rgba(255,255,255,.97) 0%,
+      rgba(255,255,255,.9) 34%, rgba(226,238,255,.55) 62%, rgba(226,238,255,0) 88%); }
+  .quadro .splat.on { opacity:1; }
+  .quadro .splat.escorrega { transition:opacity .5s ease, transform 1.1s cubic-bezier(.3,.8,.4,1);
+    transform:translateY(34%); opacity:0; }
+
   .estadoQ { position:absolute; top:50%; left:0; right:0; transform:translateY(-50%);
     text-align:center; color:var(--suave); font-size:15px; pointer-events:none; }
 
@@ -354,10 +364,11 @@ const RAIOS = [0.78, 0.52, 0.36];
 const geoBola = new THREE.SphereGeometry(1, 14, 10);
 const matBola = new THREE.MeshLambertMaterial({ color: 0xf4f8ff,
   emissive: 0x8fb6ff, emissiveIntensity: 0.25 });
-// The gingerbread's throws glow warm, so an operator can tell at a glance
-// who is shooting at whom.
-const matBolaInimiga = new THREE.MeshLambertMaterial({ color: 0xffd9a8,
-  emissive: 0xff9a3c, emissiveIntensity: 0.55 });
+// His throws are snowballs like any other, so they stay white — they are
+// only drawn larger, because a 9 cm ball fifteen metres out is a couple of
+// pixels and was getting lost.
+const matBolaInimiga = new THREE.MeshLambertMaterial({ color: 0xffffff,
+  emissive: 0xbcd8ff, emissiveIntensity: 0.35 });
 
 // ═══════════════════════════════════════════════════════════
 //  ONE SET OF ACTORS PER PLAYER
@@ -453,6 +464,7 @@ function construirQuadro(id, f) {
       '<span class="rel">—</span>' +
     '</div>' +
     '<div class="estadoQ">a aguardar</div>' +
+    '<div class="splat"></div>' +
     '<div class="fundo">' +
       '<input class="nomeIn" placeholder="nome do jogador" maxlength="14" autocomplete="off">' +
       '<button class="bt arranca">Começar</button>' +
@@ -470,7 +482,8 @@ function construirQuadro(id, f) {
     entrada: el.querySelector('.nomeIn'),
     arranca: el.querySelector('.arranca'),
     para: el.querySelector('.para'),
-    ampliar: el.querySelector('.ampliar')
+    ampliar: el.querySelector('.ampliar'),
+    splat: el.querySelector('.splat')
   };
   f.ui = ui;
 
@@ -595,6 +608,19 @@ function ligar() {
         f.ui.arranca.disabled = false;
         f.ui.arranca.textContent = d.run ? 'Recomeçar' : 'Começar';
         f.ui.para.disabled = !d.run;
+
+        // sp is -1 when clean, otherwise how far through the splat we are.
+        const sp = d.sp ?? -1;
+        if (sp >= 0 && !f.splatOn) {
+          f.splatOn = true;
+          f.ui.splat.classList.remove('escorrega');
+          f.ui.splat.classList.add('on');
+        } else if (sp < 0 && f.splatOn) {
+          f.splatOn = false;
+          f.ui.splat.classList.remove('on');
+          f.ui.splat.classList.add('escorrega');
+          setTimeout(() => f.ui.splat.classList.remove('escorrega'), 1200);
+        }
       }
     }
   };

@@ -94,6 +94,18 @@
   <div style="color:#8fa0c0;font-weight:500">O jogo começa daqui a pouco.</div>
   <div id="esperaLig" style="font-size:14px;font-weight:600"></div>
 </div>
+<!-- End of round. The 3D results board is a headset thing; on a phone the
+     numbers belong on the glass. -->
+<div id="fimMovel" style="display:none;position:fixed;inset:0;z-index:12;
+     background:rgba(8,14,28,.86);backdrop-filter:blur(4px);
+     align-items:center;justify-content:center;flex-direction:column;gap:6px;
+     text-align:center;padding:28px;font:ui-rounded,-apple-system,system-ui,sans-serif;
+     color:#eaf0ff">
+  <div style="font-size:15px;color:#8fa0c0;letter-spacing:.08em;text-transform:uppercase">fim da ronda</div>
+  <div id="fPontos" style="font-size:64px;font-weight:800;line-height:1.1">0</div>
+  <div id="fDetalhe" style="color:#8fa0c0;font-size:16px"></div>
+  <div id="fNota" style="margin-top:14px;color:#8fa0c0;font-size:14px"></div>
+</div>
 <div id="mira" style="display:none;position:fixed;inset:0;pointer-events:none;z-index:10">
   <svg viewBox="0 0 100 100" style="position:absolute;left:50%;top:50%;width:74px;height:74px;transform:translate(-50%,-50%)">
     <circle cx="50" cy="50" r="26" fill="none" stroke="rgba(255,255,255,.72)" stroke-width="2.5"/>
@@ -674,6 +686,10 @@ function relayState(now) {
       // spectator view can put the camera over their shoulder instead of
       // guessing; and the gingerbread, who is half the show.
       pl: [r2(camPos.x), r2(camPos.y), r2(camPos.z), r2(playfieldYaw)],
+      // Whether they are wearing a snowball right now, and how far through
+      // it. Without this the control screen has no way of knowing the
+      // player just got hit — the one moment everyone reacts to.
+      sp: splat.active ? r2(Math.min((performance.now() - splat.start) / 1400, 1)) : -1,
       // Head orientation, so a spectator can sit exactly where the player's
       // eyes are. Safari will not let an immersive session be screen-shared,
       // so the view is rebuilt rather than streamed — same world, same
@@ -3638,9 +3654,24 @@ function desenharFrame() {
     if (hudTimer > 0.1) {
       hudTimer = 0;
       buildDiag();
-      // The 3D panel is pinned in the world, so on a phone it slides out of
-      // frame the moment you turn. The readout lives on the screen instead.
+      // No drawHUD() here: on a phone the readout lives on the screen, and
+      // the 3D board is switched off below. Leaving the call out was what
+      // froze that board on whatever it last drew — usually the waiting
+      // message — and left it hanging in the world for the whole round.
       hudPanel.mesh.visible = false;
+      const fim = document.getElementById('fimMovel');
+      if (fim) {
+        fim.style.display = game.finished ? 'flex' : 'none';
+        if (game.finished) {
+          document.getElementById('fPontos').textContent = game.score;
+          const pontaria = game.shots ? Math.round(game.hits / game.shots * 100) : 0;
+          document.getElementById('fDetalhe').textContent =
+            `${game.hits} acertos em ${game.shots} bolas \u00b7 ${pontaria}% \u00b7 melhor s\u00e9rie ${game.bestStreak}`;
+          document.getElementById('fNota').textContent = aguardaOperador
+            ? 'O operador vai come\u00e7ar a pr\u00f3xima ronda.'
+            : 'Toca no ecr\u00e3 para jogar outra vez.';
+        }
+      }
       const esp = document.getElementById('esperaMovel');
       if (esp) {
         const aEsperar = emEspera;
@@ -3661,6 +3692,11 @@ function desenharFrame() {
         document.getElementById('hBolas').textContent = '\u2744 ' + game.ammo;
       }
     }
+
+    // Last word on the matter, after every branch that might have shown it:
+    // the world board belongs to the headset, not to a phone screen.
+    hudPanel.mesh.visible = false;
+    resultPanel.mesh.visible = false;
 
     renderer.render(scene, camera);
 }
