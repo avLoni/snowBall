@@ -65,7 +65,10 @@
   <div class="dir"><div class="nome" id="hNome">—</div><div class="rot" id="hModo">a aguardar</div></div>
 </div>
 
-<div id="estado" class="oculto">ligação <b id="eLigacao">—</b> · <b id="eFps">0</b> act/s</div>
+<div id="estado" class="oculto">ligação <b id="eLigacao">—</b>
+  · <b id="eFps">0</b> fps
+  · <b id="eAct">0</b> actualizações/s
+  · <b id="eLag">0</b> ms</div>
 
 <div id="vistas" class="oculto">
   <button data-v="olhos">Pelos olhos dele</button>
@@ -124,6 +127,24 @@ cena.add(new THREE.HemisphereLight(0x9fc0ff, 0x2a3550, 1.6));
 const lua = new THREE.DirectionalLight(0xdce8ff, 1.9);
 lua.position.set(-8, 14, -6);
 cena.add(lua);
+
+// Reserved dark, before anything renders. Adding a light to a running
+// scene makes three.js recompile every material in it, and doing that four
+// times as the models trickle in is a stall you can watch happen.
+const LUZES = [];
+for (let i = 0; i < 4; i++) {
+  const l = new THREE.PointLight(0xffb066, 0, 10, 2);
+  l.position.set(0, -50, 0);
+  cena.add(l);
+  LUZES.push(l);
+}
+let proximaLuz = 0;
+function acender(x, y, z, cor, intens, alcance) {
+  if (proximaLuz >= LUZES.length) return;
+  const l = LUZES[proximaLuz++];
+  l.position.set(x, y, z); l.color.setHex(cor);
+  l.intensity = intens; l.distance = alcance;
+}
 
 // ── ground and sky, same assets the game uses ──
 {
@@ -266,13 +287,10 @@ for (const item of CENARIO) {
       q.setFromAxisAngle(eixoY, p.rot);
       esc.set(k, k, k);
       grupo.setMatrixAt(i, m4.compose(pos, q, esc));
-      if (item.f === 'lantern.glb' || item.f === 'cabin.glb') {
-        const luz = new THREE.PointLight(item.f === 'cabin.glb' ? 0xffc07a : 0xffb066,
-          item.f === 'cabin.glb' ? 16 : 5, item.f === 'cabin.glb' ? 24 : 9, 2);
-        luz.position.set(p.x * (item.f === 'cabin.glb' ? 0.86 : 1),
-                         item.f === 'cabin.glb' ? 2.0 : item.alt * 0.82,
-                         p.z * (item.f === 'cabin.glb' ? 0.86 : 1));
-        cena.add(luz);
+      if (item.f === 'lantern.glb') {
+        acender(p.x, item.alt * 0.82, p.z, 0xffb066, 5, 9);
+      } else if (item.f === 'cabin.glb') {
+        acender(p.x * 0.86, 2.0, p.z * 0.86, 0xffc07a, 16, 24);
       }
     }
     grupo.instanceMatrix.needsUpdate = true;
@@ -406,7 +424,8 @@ let emGrelha = false;
 
 function feed(id) {
   let f = feeds.get(id);
-  if (!f) { f = { nome: id, ant: null, act: null, t: 0 }; feeds.set(id, f); }
+  if (!f) f = { nome: id, ant: null, act: null, t: 0, intervalo: 66.7 };
+  feeds.set(id, f);
   return f;
 }
 
@@ -431,7 +450,16 @@ function ligar() {
     }
     else if (d.ev === 'state') {
       const f = feed(d.id || 'p');
-      f.ant = f.act; f.act = d; f.t = performance.now();
+      const agoraMs = performance.now();
+      if (f.t) {
+        // Measure the gap instead of assuming it. The headset sends on the
+        // first of its own frames past the interval, so real gaps land on
+        // 67 ms, 83 ms, or worse if its frame rate dips. Assuming a fixed
+        // 67 made the motion arrive early, freeze, then jump — the stutter.
+        const g = agoraMs - f.t;
+        if (g > 10 && g < 500) f.intervalo = f.intervalo * 0.8 + g * 0.2;
+      }
+      f.ant = f.act; f.act = d; f.t = agoraMs;
       contagem++;
       if (!seguido) { seguido = d.id || 'p'; desenharSeparadores(); }
       mostrarJogo();
@@ -454,9 +482,16 @@ function aplicarPainel(d) {
   $('hSeguidas').textContent = d.streak ?? 0;
   $('hModo').textContent = MODOS[d.m] || d.m || '';
 }
+// Two different numbers, told apart on purpose: how often the picture is
+// drawn, and how often news arrives. They are not the same thing, and
+// confusing them sends you looking for the wrong problem.
+let framesDesenhados = 0;
 setInterval(() => {
   actsPorSeg = contagem; contagem = 0;
-  $('eFps').textContent = actsPorSeg;
+  $('eAct').textContent = actsPorSeg;
+  $('eFps').textContent = framesDesenhados; framesDesenhados = 0;
+  const f = seguido && feeds.get(seguido);
+  $('eLag').textContent = f ? Math.round(f.intervalo) : 0;
   if (feeds.size > 1) desenharSeparadores();
 }, 1000);
 
@@ -600,14 +635,22 @@ function moverCamara(px, py, pz, pyaw, dt, hq) {
 const misturar = (a, b, k) => a + (b - a) * k;
 
 let ultimo = performance.now();
+let ultimaGrelha = 0;
 function desenhar() {
   requestAnimationFrame(desenhar);
   const agora = performance.now();
   const dt = Math.min((agora - ultimo) / 1000, 0.05);
   ultimo = agora;
+  framesDesenhados++;
   if (gingerMixer) gingerMixer.update(dt);
 
-  if (emGrelha) { actualizarGrelha(); render.render(cena, camara); return; }
+  if (emGrelha) {
+    // The plan views only need a few refreshes a second; redrawing nine
+    // canvases at 60 fps for no gain is exactly the kind of waste that
+    // makes a spectator screen feel heavy.
+    if (agora - ultimaGrelha > 120) { ultimaGrelha = agora; actualizarGrelha(); }
+    return;
+  }
 
   const f = seguido ? feeds.get(seguido) : null;
   const actual = f && f.act;
@@ -617,7 +660,10 @@ function desenhar() {
   if (actual) {
     // How far between the last two snapshots we are, capped so a dropped
     // packet freezes rather than extrapolating into nonsense.
-    const k = Math.min((agora - tRecebido) / (1000 / 15), 1);
+    // A little past 1.0 is allowed: it carries the motion a few
+    // milliseconds beyond the last packet rather than stopping dead while
+    // the next one is in flight. Clamped tight so it can never invent much.
+    const k = Math.min((agora - tRecebido) / Math.max(f.intervalo, 20), 1.35);
     const a = anterior || actual;
 
     const pl = actual.pl || [0, 1.6, 0, 0];

@@ -245,7 +245,10 @@ const CFG = {
   superDrain:    260,
   superMinAmmo:  2,
 
-  relayHz:       15,     // state snapshots per second to the spectator screen
+  // Snapshots per second to the spectator screen. Every step up costs a
+  // little bandwidth and shortens the lag: at 15 the picture was a tenth of
+  // a second behind before interpolation even started.
+  relayHz:       24,
 
   fallbackThumbUp:   3.70,
   fallbackThumbDown: 3.00,
