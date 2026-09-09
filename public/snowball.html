@@ -623,6 +623,7 @@ function relayState(now) {
       score: game.score, streak: game.streak,
       t: Math.max(0, Math.ceil(game.timeLeft)),
       ammo: game.ammo, run: game.running ? 1 : 0,
+      hits: game.hits, shots: game.shots,
       cy: r2(PIVOT.y),
       ch: superState.charging ? superState.ammoUsed : 0,
       // Where the player is and which way they are looking, so the

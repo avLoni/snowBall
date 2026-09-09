@@ -52,11 +52,25 @@
      white and the snow slides down; here the pane does the same, so the
      operator sees the hit rather than having to infer it from the score. */
   .quadro .splat { position:absolute; inset:0; pointer-events:none; opacity:0;
-    background:radial-gradient(circle at 50% 42%, rgba(255,255,255,.97) 0%,
-      rgba(255,255,255,.9) 34%, rgba(226,238,255,.55) 62%, rgba(226,238,255,0) 88%); }
+    background:#ffffff; }
   .quadro .splat.on { opacity:1; }
-  .quadro .splat.escorrega { transition:opacity .5s ease, transform 1.1s cubic-bezier(.3,.8,.4,1);
-    transform:translateY(34%); opacity:0; }
+  /* Then it slides off the bottom, the way the snow does in the headset. */
+  .quadro .splat.escorrega { transition:transform .95s cubic-bezier(.35,.75,.4,1),
+    opacity .95s ease-in; transform:translateY(105%); opacity:.15; }
+
+  /* When a round ends the pane stops updating and this takes over, so the
+     operator has one obvious place to look and two obvious things to do. */
+  .quadro .fim { position:absolute; inset:0; display:none; flex-direction:column;
+    align-items:center; justify-content:center; gap:5px; text-align:center; padding:18px;
+    background:rgba(8,14,28,.86); backdrop-filter:blur(5px); }
+  .quadro.terminado .fim { display:flex; }
+  .quadro.terminado .topo, .quadro.terminado .fundo { display:none; }
+  .fimRot { font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--suave); }
+  .fimNome { font-size:19px; font-weight:700; }
+  .fimPts { font-size:clamp(38px,7vw,68px); font-weight:800; line-height:1.05; }
+  .fimDet { color:var(--suave); font-size:13.5px; }
+  .fimBts { display:flex; gap:9px; margin-top:14px; flex-wrap:wrap; justify-content:center; }
+  .fimBts .bt { pointer-events:auto; }
 
   .estadoQ { position:absolute; top:50%; left:0; right:0; transform:translateY(-50%);
     text-align:center; color:var(--suave); font-size:15px; pointer-events:none; }
@@ -465,6 +479,16 @@ function construirQuadro(id, f) {
     '</div>' +
     '<div class="estadoQ">a aguardar</div>' +
     '<div class="splat"></div>' +
+    '<div class="fim">' +
+      '<div class="fimRot">fim da ronda</div>' +
+      '<div class="fimNome"></div>' +
+      '<div class="fimPts">0</div>' +
+      '<div class="fimDet"></div>' +
+      '<div class="fimBts">' +
+        '<button class="bt arranca outra">Jogar de novo</button>' +
+        '<button class="bt sec novo">Novo jogador</button>' +
+      '</div>' +
+    '</div>' +
     '<div class="fundo">' +
       '<input class="nomeIn" placeholder="nome do jogador" maxlength="14" autocomplete="off">' +
       '<button class="bt arranca">Começar</button>' +
@@ -483,7 +507,12 @@ function construirQuadro(id, f) {
     arranca: el.querySelector('.arranca'),
     para: el.querySelector('.para'),
     ampliar: el.querySelector('.ampliar'),
-    splat: el.querySelector('.splat')
+    splat: el.querySelector('.splat'),
+    fimNome: el.querySelector('.fimNome'),
+    fimPts: el.querySelector('.fimPts'),
+    fimDet: el.querySelector('.fimDet'),
+    outra: el.querySelector('.outra'),
+    novo: el.querySelector('.novo')
   };
   f.ui = ui;
 
@@ -497,6 +526,17 @@ function construirQuadro(id, f) {
   ui.entrada.onchange = () => {
     const n = ui.entrada.value.trim();
     if (n) comando('name', n, id);
+  };
+  ui.outra.onclick = () => { comando('start', null, id); };
+  ui.novo.onclick = () => {
+    // Clears the name and hands the pane back to the operator: the next
+    // child gets typed in, then Começar. Deliberately does NOT start a
+    // round, so nobody is thrown into a game before they are ready.
+    ui.entrada.value = '';
+    el.classList.remove('terminado');
+    ui.estado.textContent = 'à espera do arranque';
+    comando('name', '—', id);
+    ui.entrada.focus();
   };
   ui.ampliar.onclick = () => {
     maximizado = maximizado === id ? null : id;
@@ -608,6 +648,20 @@ function ligar() {
         f.ui.arranca.disabled = false;
         f.ui.arranca.textContent = d.run ? 'Recomeçar' : 'Começar';
         f.ui.para.disabled = !d.run;
+
+        // The round is over: freeze this pane on its last frame and put the
+        // card up. Freezing matters — a live but motionless arena reads as
+        // a stall, and the operator needs to know it is finished.
+        const acabou = d.m === 'end';
+        f.congelado = acabou;
+        f.ui.el.classList.toggle('terminado', acabou);
+        if (acabou) {
+          f.ui.fimNome.textContent = f.nome || 'jogador';
+          f.ui.fimPts.textContent = d.score ?? 0;
+          f.ui.fimDet.textContent = (d.hits != null && d.shots != null)
+            ? `${d.hits} acertos em ${d.shots} bolas`
+            : 'ronda concluída';
+        }
 
         // sp is -1 when clean, otherwise how far through the splat we are.
         const sp = d.sp ?? -1;
@@ -741,7 +795,7 @@ function desenhar() {
   frames++;
   afinarEscala(ms);
 
-  for (const f of feeds.values()) actualizarActores(f, dt);
+  for (const f of feeds.values()) if (!f.congelado) actualizarActores(f, dt);
 
   // Every pane is drawn from the same scene: only the actors belonging to
   // that player are made visible for the pass, and the viewport is

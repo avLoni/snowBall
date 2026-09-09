@@ -106,6 +106,31 @@
   <div id="fDetalhe" style="color:#8fa0c0;font-size:16px"></div>
   <div id="fNota" style="margin-top:14px;color:#8fa0c0;font-size:14px"></div>
 </div>
+<!-- Thumb controls. Tilting the handset is a nice trick for a minute and
+     tiring after five: your arms have to hold the aim, and any hand tremor
+     is aim tremor. A stick rests. -->
+<div id="joysticks" style="display:none;position:fixed;inset:0;z-index:11;pointer-events:none">
+  <div id="joyBase" style="position:absolute;left:26px;bottom:26px;width:132px;height:132px;
+       border-radius:50%;border:2px solid rgba(255,255,255,.3);background:rgba(10,18,34,.42);
+       pointer-events:auto;touch-action:none">
+    <div id="joyPino" style="position:absolute;left:50%;top:50%;width:56px;height:56px;
+         margin:-28px 0 0 -28px;border-radius:50%;background:rgba(233,240,255,.85);
+         box-shadow:0 2px 10px rgba(0,0,0,.45)"></div>
+  </div>
+  <button id="btDisparo" style="position:absolute;right:26px;bottom:26px;width:112px;height:112px;
+       border-radius:50%;border:2px solid rgba(255,255,255,.32);background:rgba(77,214,255,.28);
+       color:#eaf0ff;font:800 19px ui-rounded,-apple-system,system-ui,sans-serif;
+       pointer-events:auto;touch-action:none">Atirar</button>
+</div>
+
+<div id="rodar" style="display:none;position:fixed;inset:0;z-index:20;background:#0b1020;
+     align-items:center;justify-content:center;flex-direction:column;gap:14px;text-align:center;
+     padding:30px;color:#eaf0ff;font:600 18px ui-rounded,-apple-system,system-ui,sans-serif">
+  <div style="font-size:46px">📱↻</div>
+  <div>Roda o telemóvel para o lado</div>
+  <div style="color:#8fa0c0;font-weight:500;font-size:15px">O jogo é feito para ecrã deitado.</div>
+</div>
+
 <div id="mira" style="display:none;position:fixed;inset:0;pointer-events:none;z-index:10">
   <svg viewBox="0 0 100 100" style="position:absolute;left:50%;top:50%;width:74px;height:74px;transform:translate(-50%,-50%)">
     <circle cx="50" cy="50" r="26" fill="none" stroke="rgba(255,255,255,.72)" stroke-width="2.5"/>
@@ -115,7 +140,7 @@
   <div style="position:absolute;left:0;right:0;bottom:26px;text-align:center;
               font:600 15px ui-rounded,-apple-system,sans-serif;color:rgba(255,255,255,.65);
               text-shadow:0 1px 4px rgba(0,0,0,.7)">
-    move o telemóvel para apontar · toca para disparar
+    <span id="dica">move o telemóvel para apontar · toca para disparar</span>
   </div>
 </div>
 <main>
@@ -145,6 +170,11 @@
     <p style="color:#8b90a0;margin:0 0 16px">
       Na primeira vez, o headset mede as tuas mãos. Espera uns segundos depois
       de o colocares e guia-te por três passos rápidos.</p>
+    <div class="checkline">
+      <input type="checkbox" id="joyBox" checked>
+      <label for="joyBox" style="margin:0">Comandos no ecrã
+        <span style="color:#6b7080">(dois cursores para apontar e um botão para disparar — mais fácil de jogar do que inclinar o telemóvel)</span></label>
+    </div>
     <div class="checkline">
       <input type="checkbox" id="esperaBox">
       <label for="esperaBox" style="margin:0">Esperar pelo operador
@@ -680,6 +710,7 @@ function relayState(now) {
       score: game.score, streak: game.streak,
       t: Math.max(0, Math.ceil(game.timeLeft)),
       ammo: game.ammo, run: game.running ? 1 : 0,
+      hits: game.hits, shots: game.shots,
       cy: r2(PIVOT.y),
       ch: superState.charging ? superState.ammoUsed : 0,
       // Where the player is and which way they are looking, so the
@@ -1733,6 +1764,7 @@ function resetGame(now) {
 async function endRound() {
   game.running = false;
   game.finished = true;
+  mostrarFimMovel();
   cancelCharge();
   const scores = await saveScore(game.name, game.score);
   drawResults(scores.sort((a, b) => b.score - a.score));
@@ -2031,6 +2063,22 @@ const superMat = new THREE.MeshStandardMaterial({
 let recoil = 0;
 
 const blastRadius = ammo => 1.1 + ammo * 0.5;
+
+// Called from the frame AND straight from endRound, so the card cannot be
+// missed if a frame is skipped at exactly the wrong moment.
+function mostrarFimMovel() {
+  const fim = document.getElementById('fimMovel');
+  if (!fim) return;
+  fim.style.display = game.finished ? 'flex' : 'none';
+  if (!game.finished) return;
+  document.getElementById('fPontos').textContent = game.score;
+  const pontaria = game.shots ? Math.round(game.hits / game.shots * 100) : 0;
+  document.getElementById('fDetalhe').textContent =
+    `${game.hits} acertos em ${game.shots} bolas \u00b7 ${pontaria}% \u00b7 melhor s\u00e9rie ${game.bestStreak}`;
+  document.getElementById('fNota').textContent = aguardaOperador
+    ? 'O operador vai come\u00e7ar a pr\u00f3xima ronda.'
+    : 'Toca no ecr\u00e3 para jogar outra vez.';
+}
 
 function fire(now) {
   if (mode !== 'playing' || game.finished) return;
@@ -3273,16 +3321,92 @@ function ligarArrasto(el) {
 // barrel really swing the wrong way.
 const PITCH_MIN_MOVEL = -0.85, PITCH_MAX_MOVEL = 1.05;
 
+// ── ON-SCREEN STICK ───────────────────────────────────────
+// The stick sets a RATE, not a position: pushing right keeps turning right
+// for as long as you hold it. Absolute mapping would need a stick as wide
+// as the arc, which no thumb can reach.
+const cursor = { x: 0, y: 0, activo: false, id: null };
+let modoJoystick = false;
+
+function ligarJoystick() {
+  const base = document.getElementById('joyBase');
+  const pino = document.getElementById('joyPino');
+  const RAIO = 52;
+
+  const mover = (t) => {
+    const r = base.getBoundingClientRect();
+    let dx = t.clientX - (r.left + r.width / 2);
+    let dy = t.clientY - (r.top + r.height / 2);
+    const d = Math.hypot(dx, dy);
+    if (d > RAIO) { dx = dx / d * RAIO; dy = dy / d * RAIO; }
+    pino.style.transform = `translate(${dx}px, ${dy}px)`;
+    // A dead zone in the middle, so resting a thumb does not drift the aim.
+    const zx = Math.abs(dx) < 7 ? 0 : dx / RAIO;
+    const zy = Math.abs(dy) < 7 ? 0 : dy / RAIO;
+    cursor.x = zx; cursor.y = zy;
+  };
+  const largar = () => {
+    cursor.x = cursor.y = 0; cursor.activo = false; cursor.id = null;
+    pino.style.transform = 'translate(0px, 0px)';
+  };
+
+  base.addEventListener('touchstart', e => {
+    e.preventDefault();
+    cursor.activo = true; cursor.id = e.changedTouches[0].identifier;
+    mover(e.changedTouches[0]);
+  }, { passive: false });
+  base.addEventListener('touchmove', e => {
+    for (const t of e.changedTouches) if (t.identifier === cursor.id) mover(t);
+  }, { passive: false });
+  base.addEventListener('touchend', largar);
+  base.addEventListener('touchcancel', largar);
+  base.addEventListener('mousedown', e => { cursor.activo = true; mover(e); });
+  addEventListener('mousemove', e => { if (cursor.activo) mover(e); });
+  addEventListener('mouseup', largar);
+
+  const bt = document.getElementById('btDisparo');
+  const disparar = (e) => {
+    e.preventDefault();
+    const agora = performance.now();
+    if (aguardaOperador && !game.running) return;
+    if (game.finished) {
+      if (aguardaOperador) return;
+      resetGame(agora); game.running = true; return;
+    }
+    if (!game.running) game.running = true;
+    fire(agora);
+  };
+  bt.addEventListener('touchstart', disparar, { passive: false });
+  bt.addEventListener('mousedown', disparar);
+}
+
+const VEL_GIRO = 1.9, VEL_ELEV = 1.15;   // radians per second at full push
+
+function aimCannonJoystick(dt) {
+  telemovel.yaw   -= cursor.x * VEL_GIRO * dt;
+  telemovel.pitch -= cursor.y * VEL_ELEV * dt;
+  telemovel.pitch = THREE.MathUtils.clamp(telemovel.pitch, PITCH_MIN_MOVEL, PITCH_MAX_MOVEL);
+  aplicarPontaria(telemovel.pitch, telemovel.yaw);
+}
+
+function aplicarPontaria(p, y) {
+  yaw = yawTarget = y;
+  pitch = pitchTarget = p;
+  yawGroup.rotation.y = y;
+  pitchGroup.rotation.x = p;
+  camera.rotation.set(p, y, 0, 'YXZ');
+}
+
 function aimCannonTelemovel() {
   // One angle for both, clamped once, applied without smoothing: any lag
   // between the two shows up as the barrel drifting off the crosshair
   // whenever the phone moves.
-  const p = THREE.MathUtils.clamp(telemovel.pitch, PITCH_MIN_MOVEL, PITCH_MAX_MOVEL);
-  yaw = yawTarget = telemovel.yaw;
-  pitch = pitchTarget = p;
-  yawGroup.rotation.y = yaw;
-  pitchGroup.rotation.x = -pitch;
-  camera.rotation.set(p, telemovel.yaw, 0, 'YXZ');
+  // The barrel fires along the pitchGroup's local −Z and the camera looks
+  // along its own −Z, so the two need the SAME rotation, not opposite
+  // ones. With the sign flipped, tipping the phone down raised the gun.
+  aplicarPontaria(
+    THREE.MathUtils.clamp(telemovel.pitch, PITCH_MIN_MOVEL, PITCH_MAX_MOVEL),
+    telemovel.yaw);
 }
 
 function aimCannon() {
@@ -3551,7 +3675,7 @@ function desenharFrame() {
     // The phone stands in for the head: fixed eye height, orientation from
     // the device. No hand tracking at all, so no calibration either.
     camera.position.set(0, 1.55, 0);
-    aimCannonTelemovel();
+    if (modoJoystick) aimCannonJoystick(dt); else aimCannonTelemovel();
     camera.getWorldPosition(camPos);
     camera.getWorldQuaternion(camQuat);
 
@@ -3659,19 +3783,7 @@ function desenharFrame() {
       // froze that board on whatever it last drew — usually the waiting
       // message — and left it hanging in the world for the whole round.
       hudPanel.mesh.visible = false;
-      const fim = document.getElementById('fimMovel');
-      if (fim) {
-        fim.style.display = game.finished ? 'flex' : 'none';
-        if (game.finished) {
-          document.getElementById('fPontos').textContent = game.score;
-          const pontaria = game.shots ? Math.round(game.hits / game.shots * 100) : 0;
-          document.getElementById('fDetalhe').textContent =
-            `${game.hits} acertos em ${game.shots} bolas \u00b7 ${pontaria}% \u00b7 melhor s\u00e9rie ${game.bestStreak}`;
-          document.getElementById('fNota').textContent = aguardaOperador
-            ? 'O operador vai come\u00e7ar a pr\u00f3xima ronda.'
-            : 'Toca no ecr\u00e3 para jogar outra vez.';
-        }
-      }
+      mostrarFimMovel();
       const esp = document.getElementById('esperaMovel');
       if (esp) {
         const aEsperar = emEspera;
@@ -3738,14 +3850,51 @@ enterBtn.addEventListener('click', () => {
   window.addEventListener('resize', ajustarTamanho);
   window.addEventListener('orientationchange', () => setTimeout(ajustarTamanho, 250));
 
-  ligarGiro();
-  ligarArrasto(renderer.domElement);
+  modoJoystick = document.getElementById('joyBox').checked;
+
+  // Landscape or nothing. The arena is wide, the sticks live in the bottom
+  // corners, and in portrait both of those fall apart. Locking needs
+  // fullscreen first on every browser that supports it at all; where it is
+  // refused, the overlay below asks politely instead.
+  const pedirDeitado = async () => {
+    try {
+      const el = document.documentElement;
+      if (el.requestFullscreen) await el.requestFullscreen({ navigationUI: 'hide' });
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    } catch (_) {}
+    try {
+      if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
+    } catch (_) {}
+  };
+  pedirDeitado();
+
+  const verificarOrientacao = () => {
+    const retrato = innerHeight > innerWidth;
+    document.getElementById('rodar').style.display = retrato ? 'flex' : 'none';
+  };
+  verificarOrientacao();
+  addEventListener('resize', verificarOrientacao);
+  addEventListener('orientationchange', () => setTimeout(verificarOrientacao, 300));
+
+  if (modoJoystick) {
+    ligarJoystick();
+    document.getElementById('joysticks').style.display = 'block';
+  } else {
+    ligarGiro();
+    ligarArrasto(renderer.domElement);
+  }
   document.getElementById('mira').style.display = 'block';
+  document.getElementById('dica').textContent = modoJoystick
+    ? 'cursor para apontar \u00b7 bot\u00e3o para atirar'
+    : 'move o telem\u00f3vel para apontar \u00b7 toca para disparar';
   document.getElementById('hudMovel').style.visibility = 'visible';
 
   // Tapping the canvas throws. One tap, one snowball \u2014 the charge-up
   // gesture the headset build has needs two hands, so it is not offered.
   renderer.domElement.addEventListener('pointerup', (e) => {
+    // With sticks on screen the fire button owns shooting; a stray tap on
+    // the world should not also throw.
+    if (modoJoystick) return;
     if (telemovel.arrasto && telemovel.usaGiro === false) return;
     const agora = performance.now();
     // The operator owns the start of a round — and of the NEXT one too,
