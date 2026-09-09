@@ -121,6 +121,11 @@
     <p style="color:#8b90a0;margin:0 0 16px">
       Na primeira vez, o headset mede as tuas mãos. Espera uns segundos depois
       de o colocares e guia-te por três passos rápidos.</p>
+    <div class="checkline">
+      <input type="checkbox" id="esperaBox">
+      <label for="esperaBox" style="margin:0">Esperar pelo operador
+        <span style="color:#6b7080">(a ronda só começa quando alguém der ordem do painel de controlo)</span></label>
+    </div>
     <div style="display:none">
       <input type="checkbox" id="recal">
       <label for="recal" style="margin:0">Calibrar de novo <span id="calState" style="color:#6b7080"></span></label>
@@ -579,6 +584,11 @@ function aplicarComando(cmd, valor) {
       drawHUD();
       break;
     case 'start':
+      // The mode is NOT cleared here. It has to survive the whole session:
+      // one child finishes, the next puts the headset on, and the round
+      // must still wait for the operator instead of starting on the first
+      // shot. Clearing it made the option work exactly once.
+
       // Straight into play. If the round was already going it restarts,
       // which is what the operator means when the next child steps up.
       if (mode === 'calibrating') { mode = 'playing'; beginPlay(); }
@@ -1217,6 +1227,24 @@ function drawHUD() {
   const { ctx, tex } = hudPanel;
   const W = 1400, H = 440;
   ctx.clearRect(0, 0, W, H);
+
+  // Waiting for the operator. Without this the headset shows a live arena
+  // with a frozen clock, which reads as broken rather than as ready.
+  if (aguardaOperador && !game.running && !game.finished) {
+    ctx.fillStyle = 'rgba(10,20,40,0.94)';
+    ctx.beginPath(); ctx.roundRect(0, 0, W, H, 44); ctx.fill();
+    ctx.strokeStyle = '#4dd6ff'; ctx.lineWidth = 7;
+    ctx.beginPath(); ctx.roundRect(9, 9, W - 18, H - 18, 38); ctx.stroke();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#eaf0ff';
+    ctx.font = 'bold 96px ui-rounded, -apple-system, sans-serif';
+    ctx.fillText('Quase l\u00e1\u2026', W / 2, 172);
+    ctx.font = '52px ui-rounded, -apple-system, sans-serif';
+    ctx.fillStyle = '#8fa0c0';
+    ctx.fillText('O jogo come\u00e7a daqui a pouco.', W / 2, 286);
+    tex.needsUpdate = true;
+    return;
+  }
 
   // Holly-green board with a brass double border — same palette as
   // the results card, so the whole arena reads as one Christmas set.
@@ -3455,6 +3483,10 @@ function buildDiag() {
 // ═══════════════════════════════════════════════════════════
 //  LOOP
 // ═══════════════════════════════════════════════════════════
+// With this on, the page can sit loaded all afternoon while children swap
+// over, and each round begins only when the operator says so.
+let aguardaOperador = false;
+
 let hudTimer = 0;
 let currentSession = null;
 let lastCalStep = -1;
@@ -3602,6 +3634,7 @@ enterBtn.addEventListener('click', () => {
   enterBtn.style.display = 'none';
   statusEl.textContent = '';
   game.name = (nameInput.value || '').trim().slice(0, 14) || 'Anon';
+  aguardaOperador = document.getElementById('esperaBox').checked;
 
   // Audio must never be able to stop the game from starting: if the context
   // cannot be created the round still runs, just silently.
@@ -3635,7 +3668,14 @@ enterBtn.addEventListener('click', () => {
   renderer.domElement.addEventListener('pointerup', (e) => {
     if (telemovel.arrasto && telemovel.usaGiro === false) return;
     const agora = performance.now();
-    if (game.finished) { resetGame(agora); game.running = true; return; }
+    // The operator owns the start of a round — and of the NEXT one too,
+    // which is the point: the phone can be handed to the next child
+    // without them being able to begin before the operator is ready.
+    if (aguardaOperador && !game.running) return;
+    if (game.finished) {
+      if (aguardaOperador) return;
+      resetGame(agora); game.running = true; return;
+    }
     if (!game.running) game.running = true;
     fire(agora);
   });
@@ -3647,7 +3687,7 @@ enterBtn.addEventListener('click', () => {
   cannonAssembly.visible = true;
   capturarFrente();
   resetGame(performance.now());
-  game.running = true;
+  game.running = !aguardaOperador;
 
   sessionActive = true;
   connectRelay();

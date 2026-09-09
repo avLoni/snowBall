@@ -68,9 +68,11 @@
 <div id="estado" class="oculto">ligação <b id="eLigacao">—</b>
   · <b id="eFps">0</b> fps
   · <b id="eAct">0</b> actualizações/s
-  · <b id="eLag">0</b> ms</div>
+  · <b id="eLag">0</b> ms
+  · <b id="eEsc">1×</b></div>
 
 <div id="vistas" class="oculto">
+  <button id="btQualidade" title="Resolução do desenho">Auto</button>
   <button data-v="olhos">Pelos olhos dele</button>
   <button data-v="ombro" class="on">Sobre o ombro</button>
   <button data-v="lado">De lado</button>
@@ -113,15 +115,48 @@ cena.background = new THREE.Color(0x112248);
 cena.fog = new THREE.Fog(0x304790, 24, 80);
 
 const camara = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.05, 400);
-const render = new THREE.WebGLRenderer({ antialias: true });
-render.setPixelRatio(Math.min(devicePixelRatio, 2));
-render.setSize(innerWidth, innerHeight);
+const render = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 document.body.appendChild(render.domElement);
-addEventListener('resize', () => {
+
+// ── ADAPTIVE RESOLUTION ───────────────────────────────────
+// A tablet screen can be 2736 px wide, and at devicePixelRatio 2 that is
+// five and a half million pixels a frame, each one lit by six lights, on
+// integrated graphics. Nobody watching a spectator screen needs that.
+// The scale here backs off until frames come in on time and creeps back up
+// when there is room, so the same page runs on a Surface and on a desktop.
+let escala = Math.min(devicePixelRatio || 1, 1.25);
+const ESCALA_MIN = 0.45, ESCALA_MAX = Math.min(devicePixelRatio || 1, 2);
+let escalaManual = false;
+
+function aplicarTamanho() {
+  render.setPixelRatio(escala);
+  render.setSize(innerWidth, innerHeight, false);
+  render.domElement.style.width = innerWidth + 'px';
+  render.domElement.style.height = innerHeight + 'px';
   camara.aspect = innerWidth / innerHeight;
   camara.updateProjectionMatrix();
-  render.setSize(innerWidth, innerHeight);
-});
+}
+aplicarTamanho();
+addEventListener('resize', aplicarTamanho);
+
+// Frame times are noisy, so the decision is made on a median of the last
+// thirty rather than on any single slow frame.
+const tempos = [];
+function afinarEscala(msFrame) {
+  if (escalaManual) return;
+  tempos.push(msFrame);
+  if (tempos.length < 30) return;
+  const ord = [...tempos].sort((a, b) => a - b);
+  const mediana = ord[15];
+  tempos.length = 0;
+  if (mediana > 26 && escala > ESCALA_MIN) {            // under ~38 fps
+    escala = Math.max(ESCALA_MIN, escala * 0.82);
+    aplicarTamanho();
+  } else if (mediana < 13 && escala < ESCALA_MAX) {      // over ~75 fps
+    escala = Math.min(ESCALA_MAX, escala * 1.10);
+    aplicarTamanho();
+  }
+}
 
 cena.add(new THREE.HemisphereLight(0x9fc0ff, 0x2a3550, 1.6));
 const lua = new THREE.DirectionalLight(0xdce8ff, 1.9);
@@ -132,7 +167,7 @@ cena.add(lua);
 // scene makes three.js recompile every material in it, and doing that four
 // times as the models trickle in is a stall you can watch happen.
 const LUZES = [];
-for (let i = 0; i < 4; i++) {
+for (let i = 0; i < 2; i++) {
   const l = new THREE.PointLight(0xffb066, 0, 10, 2);
   l.position.set(0, -50, 0);
   cena.add(l);
@@ -148,39 +183,51 @@ function acender(x, y, z, cor, intens, alcance) {
 
 // ── ground and sky, same assets the game uses ──
 {
-  const g = new THREE.PlaneGeometry(160, 160, 40, 40).rotateX(-Math.PI / 2);
+  const g = new THREE.PlaneGeometry(160, 160, 24, 24).rotateX(-Math.PI / 2);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), z = p.getZ(i), d = Math.hypot(x, z);
     if (d > 5) p.setY(i, Math.sin(x * 0.18) * Math.cos(z * 0.15) * 0.5 * Math.min((d - 5) / 8, 1));
   }
   g.computeVertexNormals();
-  cena.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xdfe9ff, roughness: 0.92 })));
+  cena.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0xdfe9ff })));
 }
 
 new THREE.TextureLoader().load('sky.jpg', (tex) => {
   tex.colorSpace = THREE.SRGBColorSpace;
   const m = new THREE.Mesh(
-    new THREE.SphereGeometry(160, 48, 32),
+    new THREE.SphereGeometry(160, 32, 20),
     new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false }));
   m.renderOrder = -1000;
   m.rotation.y = -0.6;
   cena.add(m);
 }, undefined, () => {});
 
+// The scenery is lit by a texture and two broad lights; a physically based
+// material buys nothing for a spectator screen and costs a per-pixel BRDF
+// against every light in the scene. Lambert looks the same here at a
+// fraction of the price, which is what turns five frames a second into
+// something watchable on modest hardware.
 function materialCena(raiz) {
   raiz.traverse(o => {
     if (!o.isMesh || !o.material) return;
-    o.material = o.material.clone();
-    o.material.metalness = 0;
-    o.material.roughness = 0.9;
-    if (o.material.map) {
-      o.material.map.colorSpace = THREE.SRGBColorSpace;
-      o.material.emissive = new THREE.Color(0xffffff);
-      o.material.emissiveMap = o.material.map;
-      o.material.emissiveIntensity = 0.22;
+    const velho = o.material;
+    const m = new THREE.MeshLambertMaterial({
+      map: velho.map || null,
+      color: velho.color ? velho.color.clone() : new THREE.Color(0xffffff),
+      transparent: velho.transparent,
+      alphaTest: velho.alphaTest,
+      side: velho.side
+    });
+    if (m.map) {
+      m.map.colorSpace = THREE.SRGBColorSpace;
+      m.emissive = new THREE.Color(0xffffff);
+      m.emissiveMap = m.map;
+      m.emissiveIntensity = 0.22;
     }
-    o.material.needsUpdate = true;
+    o.material = m;
+    o.castShadow = false;
+    o.receiveShadow = false;
   });
 }
 
@@ -304,11 +351,11 @@ const canhao = new THREE.Group();
 const giro = new THREE.Group();
 const inclina = new THREE.Group();
 {
-  const escuro = new THREE.MeshStandardMaterial({ color: 0x2c3a55, roughness: 0.7 });
+  const escuro = new THREE.MeshLambertMaterial({ color: 0x2c3a55 });
   const poste = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 1.0, 12), escuro);
   poste.position.y = -0.5; canhao.add(poste);
   const cano = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 0.75, 14),
-    new THREE.MeshStandardMaterial({ color: 0x4e6796, roughness: 0.5,
+    new THREE.MeshLambertMaterial({ color: 0x4e6796,
       emissive: 0x1d3050, emissiveIntensity: 0.5 }));
   cano.rotation.x = Math.PI / 2;
   cano.position.z = -0.36;
@@ -344,8 +391,8 @@ const alvos = [];
 function alvoEm(i) {
   if (alvos[i]) return alvos[i];
   const g = new THREE.Group();
-  const esfera = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 12),
-    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }));
+  const esfera = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 10),
+    new THREE.MeshLambertMaterial({ color: 0xffffff }));
   g.add(esfera);
   g.userData.esfera = esfera;
   cena.add(g);
@@ -371,7 +418,7 @@ function vestirAlvo(g, escala, indice) {
 
 const bolas = [];
 const geoBola = new THREE.SphereGeometry(1, 14, 10);
-const matBola = new THREE.MeshStandardMaterial({ color: 0xf4f8ff, roughness: 0.6,
+const matBola = new THREE.MeshLambertMaterial({ color: 0xf4f8ff,
   emissive: 0x8fb6ff, emissiveIntensity: 0.25 });
 
 // ── the gingerbread ──
@@ -492,6 +539,7 @@ setInterval(() => {
   $('eFps').textContent = framesDesenhados; framesDesenhados = 0;
   const f = seguido && feeds.get(seguido);
   $('eLag').textContent = f ? Math.round(f.intervalo) : 0;
+  $('eEsc').textContent = escala.toFixed(2) + '×';
   if (feeds.size > 1) desenharSeparadores();
 }, 1000);
 
@@ -592,6 +640,27 @@ function pintarPlano(g, d) {
   g.beginPath(); g.arc(px, py, 5, 0, 7); g.fill();
 }
 
+// Three steps plus automatic. Automatic is right nearly always, but at an
+// event you may want to pin it low and know it will stay there.
+{
+  const passos = [
+    { r: 'Auto',  v: null },
+    { r: 'Baixa', v: 0.5 },
+    { r: 'Média', v: 0.85 },
+    { r: 'Alta',  v: Math.min(devicePixelRatio || 1, 2) }
+  ];
+  let i = 0;
+  const bt = $('btQualidade');
+  bt.onclick = () => {
+    i = (i + 1) % passos.length;
+    const p = passos[i];
+    bt.textContent = p.r;
+    escalaManual = p.v !== null;
+    if (escalaManual) { escala = p.v; aplicarTamanho(); }
+    tempos.length = 0;
+  };
+}
+
 // ── view modes ──
 let vista = 'ombro';
 for (const b of document.querySelectorAll('#vistas button')) {
@@ -639,9 +708,11 @@ let ultimaGrelha = 0;
 function desenhar() {
   requestAnimationFrame(desenhar);
   const agora = performance.now();
-  const dt = Math.min((agora - ultimo) / 1000, 0.05);
+  const msFrame = agora - ultimo;
+  const dt = Math.min(msFrame / 1000, 0.05);
   ultimo = agora;
   framesDesenhados++;
+  afinarEscala(msFrame);
   if (gingerMixer) gingerMixer.update(dt);
 
   if (emGrelha) {

@@ -6,222 +6,708 @@
 <title>Bolas de Neve — controlo</title>
 <style>
   :root {
-    --fundo: #0e1524; --caixa: #182338; --linha: #26344f;
-    --texto: #eaf0ff; --suave: #8fa0c0;
-    --verde: #45c66a; --vermelho: #e2564f; --azul: #4dd6ff; --amarelo: #ffd166;
+    --fundo:#0b1020; --caixa:rgba(14,21,38,.82); --linha:#25324c;
+    --texto:#eaf0ff; --suave:#8fa0c0;
+    --verde:#45c66a; --vermelho:#e2564f; --azul:#4dd6ff; --amarelo:#ffd166;
   }
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  body {
-    margin: 0; background: var(--fundo); color: var(--texto);
-    font: 17px/1.45 ui-rounded, -apple-system, "Segoe UI", system-ui, sans-serif;
-    padding: 18px; padding-bottom: 40px;
-  }
-  h1 { font-size: 21px; margin: 0 0 4px; }
-  .estado { display: flex; align-items: center; gap: 9px; color: var(--suave); font-size: 15px; margin-bottom: 18px; }
-  .ponto { width: 11px; height: 11px; border-radius: 50%; background: #55617a; transition: background .2s; }
-  .ponto.on { background: var(--verde); box-shadow: 0 0 10px var(--verde); }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; overflow:hidden; background:var(--fundo);
+    color:var(--texto); font:15px/1.4 ui-rounded,-apple-system,"Segoe UI",system-ui,sans-serif; }
+  canvas#palco { position:fixed; inset:0; z-index:0; }
 
-  .cartao { background: var(--caixa); border: 1px solid var(--linha); border-radius: 16px; padding: 17px; margin-bottom: 15px; }
-  label { display: block; font-size: 14px; color: var(--suave); margin-bottom: 7px; }
-  input[type=text] {
-    width: 100%; padding: 15px; font-size: 19px; border-radius: 11px;
-    border: 1px solid var(--linha); background: #101a2c; color: var(--texto);
-  }
-  input[type=text]:focus { outline: none; border-color: var(--azul); }
+  /* A grid of panes sits over one canvas. Each pane is a window onto the
+     same world, drawn with that player's actors and their own camera. */
+  #grelha { position:fixed; inset:0; z-index:1; display:grid; gap:8px; padding:8px;
+    grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; }
+  #grelha.um    { grid-template-columns:1fr; grid-template-rows:1fr; }
+  #grelha.dois  { grid-template-columns:1fr 1fr; grid-template-rows:1fr; }
+  #grelha.cheio { grid-template-columns:1fr; grid-template-rows:1fr; }
 
-  .botoes { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-top: 13px; }
-  button {
-    padding: 19px 12px; font-size: 18px; font-weight: 650; border: none;
-    border-radius: 13px; color: #08101f; cursor: pointer; font-family: inherit;
-  }
-  button:active { transform: scale(.975); }
-  button:disabled { opacity: .35; }
-  .arrancar { background: var(--verde); }
-  .parar { background: var(--vermelho); color: #fff; }
-  .secundario { background: #2c3a55; color: var(--texto); font-size: 16px; padding: 14px; }
-  .largo { grid-column: 1 / -1; }
+  .quadro { position:relative; border:1px solid var(--linha); border-radius:14px;
+    overflow:hidden; display:flex; flex-direction:column; justify-content:space-between; }
+  .quadro.activo { border-color:var(--azul); }
+  .quadro.acorrer { border-color:var(--verde); }
+  .quadro .topo, .quadro .fundo { pointer-events:none; }
+  .quadro .topo { display:flex; align-items:center; gap:12px; padding:11px 13px;
+    background:linear-gradient(rgba(6,10,20,.85), transparent); }
+  .quadro .nome { font-weight:700; font-size:16px; flex:1; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .quadro .marc { font-size:26px; font-weight:800; line-height:1; }
+  .quadro .rel  { font-size:15px; color:var(--suave); min-width:44px; text-align:right; }
+  .quadro .fundo { display:flex; gap:8px; padding:11px; }
+  .quadro .fundo > * { pointer-events:auto; }
 
-  .medidores { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; text-align: center; }
-  .medidor .n { font-size: 27px; font-weight: 700; }
-  .medidor .r { font-size: 12px; color: var(--suave); text-transform: uppercase; letter-spacing: .5px; }
+  .bt { border:none; border-radius:10px; padding:12px 15px; font:inherit;
+    font-weight:650; cursor:pointer; color:#08101f; }
+  .bt.arranca { background:var(--verde); }
+  .bt.para    { background:var(--vermelho); color:#fff; }
+  .bt.sec     { background:rgba(255,255,255,.13); color:var(--texto); }
+  .bt:disabled { opacity:.32; cursor:default; }
+  .nomeIn { flex:1; min-width:0; padding:11px 13px; border-radius:10px;
+    border:1px solid var(--linha); background:rgba(6,12,24,.8); color:var(--texto);
+    font:inherit; pointer-events:auto; }
+  .nomeIn:focus { outline:none; border-color:var(--azul); }
 
-  table { width: 100%; border-collapse: collapse; font-size: 15px; }
-  td { padding: 7px 0; border-bottom: 1px solid var(--linha); }
-  td:last-child { text-align: right; font-weight: 650; color: var(--amarelo); }
-  tr:last-child td { border-bottom: none; }
+  .estadoQ { position:absolute; top:50%; left:0; right:0; transform:translateY(-50%);
+    text-align:center; color:var(--suave); font-size:15px; pointer-events:none; }
 
+  #vazio { position:fixed; inset:0; z-index:2; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px; text-align:center; padding:28px;
+    background:var(--fundo); }
+  #vazio h1 { margin:0; font-size:29px; font-weight:750; }
+  #vazio p { margin:0; color:var(--suave); max-width:44ch; line-height:1.6; }
+  #vazio code { background:rgba(255,255,255,.08); padding:3px 8px; border-radius:6px;
+    font-family:ui-monospace,Menlo,monospace; font-size:14px; }
+
+  #rodape { position:fixed; bottom:0; left:0; right:0; z-index:3; padding:7px 14px;
+    display:flex; gap:16px; align-items:center; font-size:12px; color:var(--suave);
+    background:linear-gradient(transparent, rgba(6,10,20,.9)); pointer-events:none; }
+  #rodape .dir { margin-left:auto; display:flex; gap:8px; pointer-events:auto; }
+  #rodape button { background:var(--caixa); border:1px solid var(--linha); color:var(--suave);
+    border-radius:8px; padding:5px 11px; font:inherit; font-size:12px; cursor:pointer; }
   .oculto { display:none !important; }
-  #listaJog button { font-size:15px; padding:14px 10px; }
-  .aviso { font-size: 13px; color: var(--suave); margin-top: 9px; line-height: 1.5; }
-  .barra { height: 7px; background: #101a2c; border-radius: 4px; overflow: hidden; margin-top: 6px; }
-  .barra i { display: block; height: 100%; background: var(--azul); width: 0; transition: width .2s; }
 </style>
 </head>
 <body>
 
-<h1>Bolas de Neve</h1>
-<div class="estado"><span class="ponto" id="ponto"></span><span id="ligacao">a ligar…</span></div>
+<canvas id="palco"></canvas>
+<div id="grelha"></div>
 
-<!-- Only shown when more than one headset is connected. -->
-<div class="cartao oculto" id="cxJogadores">
-  <label>Comandar</label>
-  <div id="listaJog" class="botoes" style="margin-top:0"></div>
+<div id="vazio">
+  <h1>À espera de dispositivos</h1>
+  <p>Abre o jogo no visor ou no telemóvel e liga a opção <em>esperar pelo operador</em>.
+     Aparece aqui um quadro por dispositivo, com a imagem ao vivo e os comandos.</p>
+  <p><code id="endereco"></code></p>
 </div>
 
-<div class="cartao">
-  <label for="nome">Nome do jogador</label>
-  <input type="text" id="nome" placeholder="escreve aqui" autocomplete="off" enterkeyhint="done">
-  <div class="botoes">
-    <button class="arrancar" id="arrancar">Começar</button>
-    <button class="parar" id="parar">Terminar</button>
-    <button class="secundario largo" id="recal">Repetir calibração</button>
-  </div>
-  <div class="botoes" style="margin-top:11px">
-    <a class="secundario largo" id="verJogo" href="/watch" target="_blank" rel="noopener"
-       style="display:block;text-align:center;text-decoration:none;line-height:1.2">
-      Ver o jogo ao vivo ↗
-    </a>
-  </div>
-  <div class="aviso" id="aviso">
-    O jogador só precisa de olhar, apontar e disparar. Tudo o resto é daqui.
-  </div>
+<div id="rodape">
+  <span>ligação <b id="eLig">—</b></span>
+  <span><b id="eFps">0</b> fps</span>
+  <span><b id="eEsc">1×</b></span>
+  <span id="excedente" style="color:var(--amarelo)"></span>
+  <span class="dir">
+    <button id="btQual">Qualidade: auto</button>
+    <button id="btVista">Vista: sobre o ombro</button>
+  </span>
 </div>
 
-<div class="cartao">
-  <div class="medidores">
-    <div class="medidor"><div class="n" id="mPontos">—</div><div class="r">pontos</div></div>
-    <div class="medidor"><div class="n" id="mTempo">—</div><div class="r">tempo</div></div>
-    <div class="medidor"><div class="n" id="mSeguidas">—</div><div class="r">seguidas</div></div>
-    <div class="medidor"><div class="n" id="mBolas">—</div><div class="r">bolas</div></div>
-  </div>
-  <div class="barra"><i id="barraTempo"></i></div>
-</div>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+} }
+</script>
 
-<div class="cartao">
-  <label>Melhores resultados</label>
-  <table id="tabela"><tr><td colspan="2" style="color:var(--suave)">ainda sem registos</td></tr></table>
-</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { clone as clonarComEsqueleto } from 'three/addons/utils/SkeletonUtils.js';
 
-<script>
-// O endereço é o desta própria página, por isso não há nada a configurar.
-const WS = location.origin.replace(/^http/, 'ws') + '/ws';
-
+// ═══════════════════════════════════════════════════════════
+//  CONTROL + MULTIVIEW
+//  Empty until a headset connects. Each one that does gets a pane: the
+//  live arena as that player sees it, plus the buttons to name them, start
+//  them and stop them. Any pane can be blown up to fill the screen.
+//
+//  One scene, one canvas, four viewports. The scenery is identical for
+//  everyone — it comes from a shared seed — so it is built once and drawn
+//  from four cameras; only each player's own actors are swapped in and out
+//  between passes. Four separate scenes would cost four times as much for
+//  a forest that is the same in all of them.
+// ═══════════════════════════════════════════════════════════
 const $ = id => document.getElementById(id);
-let sock = null, ligado = false, duracaoTotal = 0;
+$('endereco').textContent = location.origin;
 
-function ligar() {
-  sock = new WebSocket(WS + '?role=viewer');
+const cena = new THREE.Scene();
+cena.background = new THREE.Color(0x112248);
+cena.fog = new THREE.Fog(0x304790, 24, 80);
 
-  sock.onopen = () => {
-    ligado = true;
-    $('ligacao').textContent = 'ligado — à espera do visor';
-  };
+const render = new THREE.WebGLRenderer({ canvas: $('palco'), antialias: false,
+  powerPreference: 'high-performance' });
+render.setScissorTest(true);
 
-  sock.onmessage = (e) => {
-    let d; try { d = JSON.parse(e.data); } catch (_) { return; }
+let escala = Math.min(devicePixelRatio || 1, 1.1);
+const ESC_MIN = 0.4, ESC_MAX = Math.min(devicePixelRatio || 1, 2);
+let escalaManual = false;
+function aplicarTamanho() {
+  render.setPixelRatio(escala);
+  render.setSize(innerWidth, innerHeight, false);
+  $('palco').style.width = innerWidth + 'px';
+  $('palco').style.height = innerHeight + 'px';
+}
+aplicarTamanho();
+addEventListener('resize', aplicarTamanho);
 
-    if (d.ev === 'hello' || d.ev === 'players') {
-      jogadores = d.players || (d.player ? [d.player] : []);
-      if (alvo && !jogadores.some(p => p.id === alvo)) alvo = null;
-      marcarJogador(jogadores.length > 0);
-      if (jogadores.length === 1 && jogadores[0].name) $('nome').value = jogadores[0].name;
-      desenharJogadores();
-      if (d.scores) tabela(d.scores);
+const tempos = [];
+function afinarEscala(ms) {
+  if (escalaManual) return;
+  tempos.push(ms);
+  if (tempos.length < 30) return;
+  const mediana = [...tempos].sort((a, b) => a - b)[15];
+  tempos.length = 0;
+  if (mediana > 26 && escala > ESC_MIN) { escala = Math.max(ESC_MIN, escala * 0.82); aplicarTamanho(); }
+  else if (mediana < 13 && escala < ESC_MAX) { escala = Math.min(ESC_MAX, escala * 1.08); aplicarTamanho(); }
+}
+
+cena.add(new THREE.HemisphereLight(0x9fc0ff, 0x2a3550, 1.6));
+const lua = new THREE.DirectionalLight(0xdce8ff, 1.9);
+lua.position.set(-8, 14, -6);
+cena.add(lua);
+
+function materialBarato(raiz) {
+  raiz.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    const v = o.material;
+    const m = new THREE.MeshLambertMaterial({
+      map: v.map || null,
+      color: v.color ? v.color.clone() : new THREE.Color(0xffffff),
+      skinning: !!o.isSkinnedMesh,
+      transparent: v.transparent, alphaTest: v.alphaTest, side: v.side
+    });
+    if (m.map) {
+      m.map.colorSpace = THREE.SRGBColorSpace;
+      m.emissive = new THREE.Color(0xffffff);
+      m.emissiveMap = m.map;
+      m.emissiveIntensity = 0.22;
     }
-    else if (d.ev === 'player') marcarJogador(d.online);
-    else if (d.ev === 'scores') tabela(d.scores);
-    else if (d.ev === 'state') estado(d);
+    o.material = m;
+    o.castShadow = o.receiveShadow = false;
+  });
+}
+
+// ── ground and sky ──
+{
+  const g = new THREE.PlaneGeometry(160, 160, 24, 24).rotateX(-Math.PI / 2);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i), d = Math.hypot(x, z);
+    if (d > 5) p.setY(i, Math.sin(x * 0.18) * Math.cos(z * 0.15) * 0.5 * Math.min((d - 5) / 8, 1));
+  }
+  g.computeVertexNormals();
+  cena.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0xdfe9ff })));
+}
+new THREE.TextureLoader().load('sky.jpg', (tex) => {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.SphereGeometry(160, 32, 20),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false }));
+  m.renderOrder = -1000; m.rotation.y = -0.6;
+  cena.add(m);
+}, undefined, () => {});
+
+const CENARIO = [
+  // file, count, height in metres, ring radius min/max, random tilt
+  { f: 'pine.glb',    n: 16, alt: 3.8, r0: 13, r1: 30, girar: true },
+  { f: 'tree_a.glb',  n: 14, alt: 4.2, r0: 12, r1: 29, girar: true },
+  { f: 'tree_b.glb',  n: 12, alt: 3.4, r0: 14, r1: 30, girar: true },
+  { f: 'tree_c.glb',  n: 12, alt: 3.9, r0: 13, r1: 28, girar: true },
+  { f: 'rocks.glb',   n:  9, alt: 0.9, r0:  7, r1: 20, girar: true },
+  { f: 'log.glb',     n:  3, alt: 0.7, r0:  8, r1: 16, girar: true },
+  { f: 'fence.glb',   n:  7, alt: 1.1, r0:  6, r1: 11, girar: false },
+  // Cabin first: it claims one of the four reserved lights before the
+  // lanterns take the rest.
+  { f: 'cabin.glb',   n:  1, alt: 4.0, r0: 15, r1: 15, girar: false },
+  { f: 'lantern.glb', n:  3, alt: 2.3, r0:  7, r1: 13, girar: false }
+];
+
+// ── A REPEATABLE WORLD ────────────────────────────────────
+// The layout is worked out from a fixed seed, in a fixed order, BEFORE
+// anything is loaded. Two reasons. Models arrive over the network in
+// whatever order they finish, so placing them inside their load callbacks
+// made the world different on every visit. And the spectator screen runs
+// this same block with this same seed, which is the only way it can show
+// the same forest the player is standing in.
+const SEMENTE_MUNDO = 20261225;
+function geradorSemeado(s) {
+  return function () {
+    s |= 0; s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
 
-  sock.onclose = () => {
-    ligado = false;
-    $('ligacao').textContent = 'ligação perdida — a tentar de novo';
-    $('ponto').classList.remove('on');
-    setTimeout(ligar, 2500);
+const ocupados = [];
+const obstaculos = [];      // { x, z, raio } — what the snowmen must avoid
+const PLANTA = {};          // file -> [{ x, z, rot, mul }]
+
+{
+  const rnd = geradorSemeado(SEMENTE_MUNDO);
+  const anguloLivre = (minSep) => {
+    for (let t = 0; t < 40; t++) {
+      const a = rnd() * Math.PI * 2;
+      // Leave a wedge open dead ahead: that is where the throwing happens.
+      if (Math.abs(((a + Math.PI) % (Math.PI * 2)) - Math.PI) < 0.5) continue;
+      if (ocupados.every(o => Math.abs(((a - o + Math.PI * 3) % (Math.PI * 2)) - Math.PI) > minSep)) {
+        ocupados.push(a); return a;
+      }
+    }
+    const a = rnd() * Math.PI * 2; ocupados.push(a); return a;
   };
-  sock.onerror = () => {};
-}
-
-function marcarJogador(online) {
-  $('ponto').classList.toggle('on', online);
-  $('ligacao').textContent = online ? 'visor ligado' : 'ligado — à espera do visor';
-}
-
-function estado(d) {
-  $('mPontos').textContent = d.score ?? '—';
-  $('mTempo').textContent = d.t != null ? d.t + 's' : '—';
-  $('mSeguidas').textContent = d.streak ?? '—';
-  $('mBolas').textContent = d.ammo ?? '—';
-  if (d.t != null) {
-    duracaoTotal = Math.max(duracaoTotal, d.t);
-    $('barraTempo').style.width = (duracaoTotal ? d.t / duracaoTotal * 100 : 0) + '%';
-  }
-  const modos = { cal: 'a calibrar', play: 'a jogar', end: 'terminado' };
-  if (d.m) $('ligacao').textContent = 'visor ligado — ' + (modos[d.m] || d.m);
-}
-
-function tabela(lista) {
-  const t = $('tabela');
-  if (!lista || !lista.length) {
-    t.innerHTML = '<tr><td colspan="2" style="color:var(--suave)">ainda sem registos</td></tr>';
-    return;
-  }
-  t.innerHTML = lista.slice(0, 8)
-    .map(s => `<tr><td>${escapar(s.name)}</td><td>${s.score}</td></tr>`).join('');
-}
-
-const escapar = s => String(s).replace(/[<>&"]/g, c =>
-  ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]);
-
-// Which headset the buttons act on. Null means all of them, which is what
-// a single-headset setup wants and what most sessions will be.
-let jogadores = [], alvo = null;
-
-function desenharJogadores() {
-  const cx = $('cxJogadores'), lista = $('listaJog');
-  cx.classList.toggle('oculto', jogadores.length < 2);
-  if (jogadores.length < 2) { alvo = null; return; }
-  lista.innerHTML =
-    `<button class="secundario ${alvo === null ? 'arrancar' : ''}" data-id="">Todos</button>` +
-    jogadores.map(p =>
-      `<button class="secundario ${alvo === p.id ? 'arrancar' : ''}" data-id="${p.id}">${escapar(p.name)}</button>`
-    ).join('');
-  for (const b of lista.querySelectorAll('button')) {
-    b.onclick = () => { alvo = b.dataset.id || null; desenharJogadores(); };
+  for (const item of CENARIO) {
+    const lista = [];
+    for (let i = 0; i < item.n; i++) {
+      const a = anguloLivre(item.n > 8 ? 0.10 : 0.35);
+      const r = item.r0 + rnd() * (item.r1 - item.r0);
+      const mul = item.n > 1 ? 0.80 + rnd() * 0.5 : 1;
+      const x = Math.cos(a) * r, z = Math.sin(a) * r;
+      // Fences, lanterns and the cabin face the middle; trees and rocks are
+      // turned at random so two clones never read as the same object.
+      const rot = item.girar ? rnd() * Math.PI * 2 : Math.atan2(-x, -z);
+      lista.push({ x, z, rot, mul });
+      // Trunk-sized footprint: only the solid part matters, since the
+      // canopy is above everything that flies.
+      if (item.f.startsWith('tree') || item.f === 'pine.glb') {
+        obstaculos.push({ x, z, raio: 1.5 * mul });
+      } else if (item.f === 'cabin.glb') {
+        obstaculos.push({ x, z, raio: 3.2 });
+      }
+    }
+    PLANTA[item.f] = lista;
   }
 }
 
-function enviar(cmd, value) {
-  if (!sock || sock.readyState !== 1) return;
-  sock.send(JSON.stringify({ cmd, value, target: alvo }));
+
+// ── the shared forest, built once from the same seed the game uses ──
+for (const item of CENARIO) {
+  new GLTFLoader().load(item.f, (gltf) => {
+    let fonte = null;
+    gltf.scene.updateWorldMatrix(true, true);
+    gltf.scene.traverse(o => { if (o.isMesh && !fonte) fonte = o; });
+    if (!fonte) return;
+    const geo = fonte.geometry.clone();
+    geo.applyMatrix4(fonte.matrixWorld);
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox;
+    geo.translate(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
+    const base = item.alt / Math.max(bb.max.y - bb.min.y, 0.01);
+    const env = new THREE.Object3D(); env.add(fonte);
+    materialBarato(env);
+    const planta = PLANTA[item.f] || [];
+    const grupo = new THREE.InstancedMesh(geo, fonte.material, planta.length);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion();
+    const pos = new THREE.Vector3(), esc = new THREE.Vector3();
+    const eixoY = new THREE.Vector3(0, 1, 0);
+    for (let i = 0; i < planta.length; i++) {
+      const p = planta[i];
+      const k = base * p.mul;
+      pos.set(p.x, 0, p.z);
+      q.setFromAxisAngle(eixoY, p.rot);
+      esc.set(k, k, k);
+      grupo.setMatrixAt(i, m4.compose(pos, q, esc));
+    }
+    grupo.instanceMatrix.needsUpdate = true;
+    grupo.frustumCulled = false;
+    cena.add(grupo);
+  }, undefined, () => {});
 }
 
-$('arrancar').onclick = () => {
-  const n = $('nome').value.trim();
-  if (n) enviar('name', n);
-  duracaoTotal = 0;
-  enviar('start');
-  piscar($('arrancar'));
-};
-$('parar').onclick = () => { enviar('stop'); piscar($('parar')); };
-$('recal').onclick = () => { enviar('recal'); piscar($('recal')); };
-$('nome').addEventListener('change', () => {
-  const n = $('nome').value.trim();
-  if (n) enviar('name', n);
+// ── models the actors are built from ──
+const FICHEIROS_NEVE = ['snowman1.glb', 'snowman2.glb', 'snowman3.glb', 'snowman4.glb'];
+const modelosNeve = new Array(FICHEIROS_NEVE.length).fill(null);
+FICHEIROS_NEVE.forEach((f, idx) => {
+  new GLTFLoader().load(f, (gltf) => {
+    materialBarato(gltf.scene);
+    const c = new THREE.Box3().setFromObject(gltf.scene);
+    modelosNeve[idx] = { raiz: gltf.scene, alt: Math.max(c.max.y - c.min.y, 0.01),
+                         centro: c.getCenter(new THREE.Vector3()), minY: c.min.y };
+  }, undefined, () => {});
 });
+
+let gingerFonte = null, gingerAnims = [];
+new GLTFLoader().load('gingerbread.glb', (gltf) => {
+  materialBarato(gltf.scene);
+  const c = new THREE.Box3().setFromObject(gltf.scene);
+  gltf.scene.scale.setScalar(1.15 / Math.max(c.max.y - c.min.y, 0.01));
+  gingerFonte = gltf.scene;
+  gingerAnims = gltf.animations;
+}, undefined, () => {});
+
+const RAIOS = [0.78, 0.52, 0.36];
+const geoBola = new THREE.SphereGeometry(1, 14, 10);
+const matBola = new THREE.MeshLambertMaterial({ color: 0xf4f8ff,
+  emissive: 0x8fb6ff, emissiveIntensity: 0.25 });
+
+// ═══════════════════════════════════════════════════════════
+//  ONE SET OF ACTORS PER PLAYER
+// ═══════════════════════════════════════════════════════════
+function criarActores() {
+  const raiz = new THREE.Group();
+  raiz.visible = false;
+  cena.add(raiz);
+
+  const canhao = new THREE.Group();
+  const giro = new THREE.Group(), inclina = new THREE.Group();
+  const escuro = new THREE.MeshLambertMaterial({ color: 0x2c3a55 });
+  const poste = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 1.0, 10), escuro);
+  poste.position.y = -0.5; canhao.add(poste);
+  const cano = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 0.75, 12),
+    new THREE.MeshLambertMaterial({ color: 0x4e6796, emissive: 0x1d3050, emissiveIntensity: 0.5 }));
+  cano.rotation.x = Math.PI / 2; cano.position.z = -0.36;
+  inclina.add(cano); giro.add(inclina); canhao.add(giro);
+  raiz.add(canhao);
+
+  const marca = new THREE.Mesh(
+    new THREE.RingGeometry(0.34, 0.42, 24).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0x5b8cff, transparent: true, opacity: 0.55 }));
+  marca.position.y = 0.02;
+  raiz.add(marca);
+
+  const A = { raiz, canhao, giro, inclina, marca,
+              ginger: null, mixer: null, clips: {}, clipActual: null,
+              alvos: [], bolas: [],
+              camara: new THREE.PerspectiveCamera(55, 1, 0.05, 400) };
+  montarGinger(A);
+  return A;
+}
+
+function vestirAlvo(g, escalaAlvo, indice) {
+  if (g.userData.vestido === indice) return;
+  const v = modelosNeve[indice];
+  if (!v) return;
+  if (g.userData.corpo) g.remove(g.userData.corpo);
+  const c = v.raiz.clone();
+  const s = escalaAlvo * 2.35 / v.alt;
+  c.scale.setScalar(s);
+  c.position.set(-v.centro.x * s, -v.minY * s, -v.centro.z * s);
+  if (g.userData.esfera) { g.remove(g.userData.esfera); g.userData.esfera = null; }
+  g.add(c);
+  g.userData.corpo = c;
+  g.userData.vestido = indice;
+}
+
+const MODOS = { cal: 'a calibrar', play: 'a jogar', end: 'terminado' };
+const misturar = (a, b, k) => a + (b - a) * k;
+
+// ═══════════════════════════════════════════════════════════
+//  FEEDS AND PANES
+// ═══════════════════════════════════════════════════════════
+const MAX_QUADROS = 4;
+const feeds = new Map();      // id -> { nome, ant, act, t, intervalo, actores, ui }
+let maximizado = null;
+let sock = null;
+let vista = 'ombro';
+const VISTAS = { ombro: 'sobre o ombro', olhos: 'pelos olhos dele',
+                 lado: 'de lado', alto: 'de cima' };
+
+function feed(id) {
+  let f = feeds.get(id);
+  if (!f) {
+    f = { nome: '', ant: null, act: null, t: 0, intervalo: 45,
+          actores: criarActores(), ui: null };
+    feeds.set(id, f);
+    construirQuadro(id, f);
+    arrumarGrelha();
+  }
+  return f;
+}
+
+function apagarFeed(id) {
+  const f = feeds.get(id);
+  if (!f) return;
+  cena.remove(f.actores.raiz);
+  if (f.ui) f.ui.el.remove();
+  feeds.delete(id);
+  if (maximizado === id) maximizado = null;
+  arrumarGrelha();
+}
+
+function construirQuadro(id, f) {
+  const el = document.createElement('div');
+  el.className = 'quadro';
+  el.innerHTML =
+    '<div class="topo">' +
+      '<span class="nome">—</span>' +
+      '<span class="marc">0</span>' +
+      '<span class="rel">—</span>' +
+    '</div>' +
+    '<div class="estadoQ">a aguardar</div>' +
+    '<div class="fundo">' +
+      '<input class="nomeIn" placeholder="nome do jogador" maxlength="14" autocomplete="off">' +
+      '<button class="bt arranca">Começar</button>' +
+      '<button class="bt para">Terminar</button>' +
+      '<button class="bt sec ampliar" title="Ocupar o ecrã">⤢</button>' +
+    '</div>';
+  $('grelha').appendChild(el);
+
+  const ui = {
+    el,
+    nome: el.querySelector('.nome'),
+    marc: el.querySelector('.marc'),
+    rel:  el.querySelector('.rel'),
+    estado: el.querySelector('.estadoQ'),
+    entrada: el.querySelector('.nomeIn'),
+    arranca: el.querySelector('.arranca'),
+    para: el.querySelector('.para'),
+    ampliar: el.querySelector('.ampliar')
+  };
+  f.ui = ui;
+
+  ui.arranca.onclick = () => {
+    const n = ui.entrada.value.trim();
+    if (n) comando('name', n, id);
+    comando('start', null, id);
+    piscar(ui.arranca);
+  };
+  ui.para.onclick = () => { comando('stop', null, id); piscar(ui.para); };
+  ui.entrada.onchange = () => {
+    const n = ui.entrada.value.trim();
+    if (n) comando('name', n, id);
+  };
+  ui.ampliar.onclick = () => {
+    maximizado = maximizado === id ? null : id;
+    ui.ampliar.textContent = maximizado === id ? '⤡' : '⤢';
+    arrumarGrelha();
+  };
+}
 
 function piscar(b) {
   const t = b.textContent;
   b.textContent = '✓';
-  setTimeout(() => { b.textContent = t; }, 550);
+  setTimeout(() => { b.textContent = t; }, 500);
 }
 
-// O plano gratuito do Render adormece ao fim de 15 minutos sem tráfego, e
-// demora quase um minuto a acordar. Enquanto este painel estiver aberto,
-// mantém o serviço desperto.
+function arrumarGrelha() {
+  const g = $('grelha');
+  const ids = [...feeds.keys()];
+  $('vazio').classList.toggle('oculto', ids.length > 0);
+  // Beyond four, later arrivals keep receiving and stay commandable — they
+  // simply have no pane until one frees up. Four 3D views is already
+  // generous for a laptop.
+  const visiveis = ids.slice(0, MAX_QUADROS);
+  const n = visiveis.length;
+  g.className = maximizado ? 'cheio' : (n <= 1 ? 'um' : (n === 2 ? 'dois' : ''));
+  for (const [id, f] of feeds) {
+    if (!f.ui) continue;
+    const cabe = visiveis.includes(id);
+    const escondido = (maximizado && maximizado !== id) || !cabe;
+    f.ui.el.classList.toggle('oculto', !!escondido);
+    f.ui.el.classList.toggle('activo', maximizado === id);
+  }
+  const extra = ids.length - MAX_QUADROS;
+  $('excedente').textContent = extra > 0
+    ? `mais ${extra} dispositivo${extra > 1 ? 's' : ''} ligado${extra > 1 ? 's' : ''}, sem quadro` : '';
+}
+
+function comando(cmd, value, target) {
+  if (!sock || sock.readyState !== 1) return;
+  sock.send(JSON.stringify({ cmd, value, target }));
+}
+
+// ── the link ──
+function ligar() {
+  sock = new WebSocket(location.origin.replace(/^http/, 'ws') + '/ws?role=viewer');
+  sock.onopen = () => { $('eLig').textContent = 'ligada'; };
+  sock.onmessage = (ev) => {
+    let d; try { d = JSON.parse(ev.data); } catch (_) { return; }
+
+    if (d.ev === 'hello' || d.ev === 'players') {
+      const vivos = new Set();
+      for (const p of (d.players || [])) {
+        vivos.add(p.id);
+        const f = feed(p.id);
+        f.nome = p.name || 'jogador';
+        if (f.ui) {
+          f.ui.nome.textContent = f.nome;
+          if (!f.ui.entrada.value && p.name && p.name !== 'Anon') f.ui.entrada.value = p.name;
+        }
+      }
+      for (const id of [...feeds.keys()]) if (!vivos.has(id)) apagarFeed(id);
+    }
+    else if (d.ev === 'state') {
+      const id = d.id || 'p';
+      const f = feed(id);
+      const agoraMs = performance.now();
+      if (f.t) {
+        const g = agoraMs - f.t;
+        if (g > 10 && g < 500) f.intervalo = f.intervalo * 0.8 + g * 0.2;
+      }
+      f.ant = f.act; f.act = d; f.t = agoraMs;
+      if (f.ui) {
+        f.ui.marc.textContent = d.score ?? 0;
+        f.ui.rel.textContent = d.t != null ? d.t + 's' : '—';
+        // Each headset is somewhere different: one still being calibrated,
+        // one waiting, one mid-round, one finished. The pane says which,
+        // and the buttons follow — you cannot stop a round that is not
+        // running, and starting one that is restarts it, which is what you
+        // want when the next child steps up.
+        let fase = '';
+        if (d.m === 'cal') fase = 'a calibrar — não interromper';
+        else if (d.m === 'end') fase = 'ronda terminada';
+        else if (!d.run) fase = 'à espera do arranque';
+        f.ui.estado.textContent = fase;
+        f.ui.el.classList.toggle('acorrer', !!d.run);
+        f.ui.arranca.disabled = false;
+        f.ui.arranca.textContent = d.run ? 'Recomeçar' : 'Começar';
+        f.ui.para.disabled = !d.run;
+      }
+    }
+  };
+  sock.onclose = () => { $('eLig').textContent = 'perdida'; setTimeout(ligar, 2500); };
+  sock.onerror = () => {};
+}
+
+// ── camera per pane ──
+const alvoCam = new THREE.Vector3();
+const qCabeca = new THREE.Quaternion();
+function posicionarCamara(cam, d, dt) {
+  const pl = d.pl || [0, 1.6, 0, 0];
+  const [px, py, pz, pyaw] = pl;
+  const frente = new THREE.Vector3(-Math.sin(pyaw), 0, -Math.cos(pyaw));
+  if (vista === 'olhos') {
+    cam.position.set(px, py, pz);
+    if (d.hq) { qCabeca.set(d.hq[0], d.hq[1], d.hq[2], d.hq[3]); cam.quaternion.slerp(qCabeca, 1 - Math.pow(0.0001, dt)); }
+    return;
+  }
+  if (vista === 'ombro')      alvoCam.set(px - frente.x * 3.4, py + 1.5, pz - frente.z * 3.4);
+  else if (vista === 'lado')  alvoCam.set(px - frente.z * 7 + frente.x * 2, py + 2.2, pz + frente.x * 7 + frente.z * 2);
+  else                        alvoCam.set(px - frente.x * 2, 15, pz - frente.z * 2);
+  cam.position.lerp(alvoCam, 1 - Math.pow(0.003, dt));
+  cam.lookAt(px + frente.x * (vista === 'alto' ? 7 : 8), vista === 'alto' ? 0.5 : py - 0.2,
+             pz + frente.z * (vista === 'alto' ? 7 : 8));
+}
+
+function actualizarActores(f, dt) {
+  const A = f.actores;
+  const d = f.act;
+  if (!d) return;
+  const a = f.ant || d;
+  const k = Math.min((performance.now() - f.t) / Math.max(f.intervalo, 20), 1.35);
+
+  const pl = d.pl || [0, 1.6, 0, 0], pa = a.pl || pl;
+  const px = misturar(pa[0], pl[0], k), py = misturar(pa[1], pl[1], k), pz = misturar(pa[2], pl[2], k);
+  A.marca.position.set(px, 0.02, pz);
+  A.canhao.position.set(px, d.cy ?? 1.0, pz);
+  A.canhao.rotation.y = pl[3] || 0;
+  A.giro.rotation.y = misturar(a.yaw ?? 0, d.yaw ?? 0, k);
+  A.inclina.rotation.x = -misturar(a.pitch ?? 0, d.pitch ?? 0, k);
+  A.canhao.visible = A.marca.visible = vista !== 'olhos';
+
+  const tg = d.tg || [];
+  for (let i = 0; i < tg.length; i++) {
+    const [x, y, z, tier, morto, variante, giroY] = tg[i];
+    let g = A.alvos[i];
+    if (!g) {
+      g = new THREE.Group();
+      const e = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 10),
+        new THREE.MeshLambertMaterial({ color: 0xffffff }));
+      g.add(e); g.userData.esfera = e;
+      A.raiz.add(g); A.alvos[i] = g;
+    }
+    const escalaAlvo = RAIOS[tier] || 0.5;
+    if (variante >= 0) vestirAlvo(g, escalaAlvo, variante);
+    if (g.userData.esfera) g.userData.esfera.scale.setScalar(escalaAlvo);
+    const ta = (a.tg && a.tg[i]) || tg[i];
+    g.position.set(misturar(ta[0], x, k), misturar(ta[1], y, k), misturar(ta[2], z, k));
+    g.visible = !morto;
+    if (giroY != null) g.rotation.y = giroY;
+  }
+  for (let i = tg.length; i < A.alvos.length; i++) if (A.alvos[i]) A.alvos[i].visible = false;
+
+  const bs = d.balls || [];
+  for (let i = 0; i < bs.length; i++) {
+    if (!A.bolas[i]) { A.bolas[i] = new THREE.Mesh(geoBola, matBola); A.raiz.add(A.bolas[i]); }
+    const [x, y, z, r] = bs[i];
+    A.bolas[i].position.set(x, y, z);
+    A.bolas[i].scale.setScalar(r);
+    A.bolas[i].visible = true;
+  }
+  for (let i = bs.length; i < A.bolas.length; i++) if (A.bolas[i]) A.bolas[i].visible = false;
+
+  if (A.mixer) A.mixer.update(dt);
+  if (A.ginger) {
+    if (d.elf) {
+      const [x, y, z, ry, estado] = d.elf;
+      const ea = a.elf || d.elf;
+      A.ginger.position.set(misturar(ea[0], x, k), misturar(ea[1], y, k), misturar(ea[2], z, k));
+      A.ginger.rotation.y = ry;
+      A.ginger.visible = true;
+      const mapa = { emerge: 'emerge', wait: 'idle', windup: 'windup', follow: 'follow',
+                     taunt: 'idle', retreat: 'retreat', hit: 'hit' };
+      const nome = mapa[estado] || 'idle';
+      const act = A.clips[nome] || A.clips.idle;
+      if (act && act !== A.clipActual) {
+        try {
+          act.reset().setEffectiveWeight(1).play();
+          if (A.clipActual && A.clipActual.isRunning()) A.clipActual.crossFadeTo(act, 0.1, false);
+          else if (A.clipActual) A.clipActual.stop();
+          A.clipActual = act;
+        } catch (e) {}
+      }
+    } else A.ginger.visible = false;
+  }
+
+  posicionarCamara(A.camara, { pl: [px, py, pz, pl[3] || 0], hq: d.hq }, dt);
+}
+
+// ── the frame ──
+let ultimo = performance.now(), frames = 0;
+setInterval(() => {
+  $('eFps').textContent = frames; frames = 0;
+  $('eEsc').textContent = escala.toFixed(2) + '×';
+}, 1000);
+
+function desenhar() {
+  requestAnimationFrame(desenhar);
+  const agora = performance.now();
+  const ms = agora - ultimo;
+  const dt = Math.min(ms / 1000, 0.05);
+  ultimo = agora;
+  frames++;
+  afinarEscala(ms);
+
+  for (const f of feeds.values()) actualizarActores(f, dt);
+
+  // Every pane is drawn from the same scene: only the actors belonging to
+  // that player are made visible for the pass, and the viewport is
+  // scissored to the rectangle its DOM tile occupies.
+  const dpr = render.getPixelRatio();
+  const alturaJanela = innerHeight;
+  render.clear();
+  for (const [id, f] of feeds) {
+    if (!f.ui || f.ui.el.classList.contains('oculto')) continue;
+    const r = f.ui.el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) continue;
+    for (const o of feeds.values()) o.actores.raiz.visible = false;
+    f.actores.raiz.visible = true;
+
+    const x = r.left * dpr, y = (alturaJanela - r.bottom) * dpr;
+    const l = r.width * dpr, h = r.height * dpr;
+    render.setViewport(x, y, l, h);
+    render.setScissor(x, y, l, h);
+    f.actores.camara.aspect = r.width / r.height;
+    f.actores.camara.updateProjectionMatrix();
+    render.render(cena, f.actores.camara);
+  }
+  for (const o of feeds.values()) o.actores.raiz.visible = false;
+}
+
+// ── footer controls ──
+{
+  const passos = [['auto', null], ['baixa', 0.45], ['média', 0.8], ['alta', ESC_MAX]];
+  let i = 0;
+  $('btQual').onclick = () => {
+    i = (i + 1) % passos.length;
+    const [rot, v] = passos[i];
+    $('btQual').textContent = 'Qualidade: ' + rot;
+    escalaManual = v !== null;
+    if (escalaManual) { escala = v; aplicarTamanho(); }
+    tempos.length = 0;
+  };
+  const ordem = ['ombro', 'olhos', 'lado', 'alto'];
+  let j = 0;
+  $('btVista').onclick = () => {
+    j = (j + 1) % ordem.length;
+    vista = ordem[j];
+    $('btVista').textContent = 'Vista: ' + VISTAS[vista];
+  };
+}
+
+// Keeps a free Render instance from falling asleep mid-session.
 setInterval(() => { fetch('/ping').catch(() => {}); }, 10 * 60 * 1000);
 
+arrumarGrelha();
 ligar();
+desenhar();
 </script>
 </body>
 </html>
