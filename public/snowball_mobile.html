@@ -3412,11 +3412,18 @@ function ligarJoystick() {
 
 const VEL_GIRO = 1.9, VEL_ELEV = 1.15;   // radians per second at full push
 
+// The stick's aim lives HERE, not in `telemovel`. It used to accumulate
+// into the same two numbers the gyro overwrites on every orientation
+// event, so once the gyro was switched on for dodging it quietly wiped
+// whatever the thumb had just done — and the cannon started following the
+// handset again. In stick mode the gyro now contributes nothing but roll.
+const mira = { yaw: 0, pitch: 0 };
+
 function aimCannonJoystick(dt) {
-  telemovel.yaw   -= cursor.x * VEL_GIRO * dt;
-  telemovel.pitch -= cursor.y * VEL_ELEV * dt;
-  telemovel.pitch = THREE.MathUtils.clamp(telemovel.pitch, PITCH_MIN_MOVEL, PITCH_MAX_MOVEL);
-  aplicarPontaria(telemovel.pitch, telemovel.yaw);
+  mira.yaw   -= cursor.x * VEL_GIRO * dt;
+  mira.pitch -= cursor.y * VEL_ELEV * dt;
+  mira.pitch = THREE.MathUtils.clamp(mira.pitch, PITCH_MIN_MOVEL, PITCH_MAX_MOVEL);
+  aplicarPontaria(mira.pitch, mira.yaw);
 }
 
 // The cannon turns about its own post, which stands 95 cm in FRONT of the
