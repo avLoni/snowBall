@@ -82,6 +82,18 @@
   <span id="hTempo" style="font-size:19px;font-weight:800"></span>
   <span id="hBolas"></span>
 </div>
+<!-- The 3D panel that carries this message on the headset is hidden on a
+     phone, so the wait needs its own overlay or the player sees a live
+     arena with a frozen clock and assumes it is broken. -->
+<div id="esperaMovel" style="display:none;position:fixed;inset:0;z-index:12;
+     background:rgba(8,14,28,.82);backdrop-filter:blur(3px);
+     align-items:center;justify-content:center;flex-direction:column;gap:12px;
+     text-align:center;padding:28px;font:600 17px ui-rounded,-apple-system,system-ui,sans-serif;
+     color:#eaf0ff">
+  <div style="font-size:31px;font-weight:800">Quase lá…</div>
+  <div style="color:#8fa0c0;font-weight:500">O jogo começa daqui a pouco.</div>
+  <div id="esperaLig" style="font-size:14px;font-weight:600"></div>
+</div>
 <div id="mira" style="display:none;position:fixed;inset:0;pointer-events:none;z-index:10">
   <svg viewBox="0 0 100 100" style="position:absolute;left:50%;top:50%;width:74px;height:74px;transform:translate(-50%,-50%)">
     <circle cx="50" cy="50" r="26" fill="none" stroke="rgba(255,255,255,.72)" stroke-width="2.5"/>
@@ -3610,6 +3622,18 @@ function desenharFrame() {
       // The 3D panel is pinned in the world, so on a phone it slides out of
       // frame the moment you turn. The readout lives on the screen instead.
       hudPanel.mesh.visible = false;
+      const esp = document.getElementById('esperaMovel');
+      if (esp) {
+        const aEsperar = aguardaOperador && !game.running && !game.finished;
+        esp.style.display = aEsperar ? 'flex' : 'none';
+        if (aEsperar) {
+          const ligado = relaySock && relaySock.readyState === 1;
+          const el = document.getElementById('esperaLig');
+          el.textContent = ligado ? '\u25cf ligado ao painel de controlo'
+                                  : '\u25cf sem liga\u00e7\u00e3o ao painel de controlo';
+          el.style.color = ligado ? '#6fd44a' : '#e2564f';
+        }
+      }
       const p = document.getElementById('hPontos');
       if (p) {
         p.textContent = game.score + (game.streak > 1 ? '  \u00d7' + game.streak : '');

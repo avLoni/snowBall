@@ -1212,6 +1212,14 @@ function drawHUD() {
     ctx.font = '52px ui-rounded, -apple-system, sans-serif';
     ctx.fillStyle = '#8fa0c0';
     ctx.fillText('O jogo come\u00e7a daqui a pouco.', W / 2, 286);
+    // Whether the panel can actually reach this headset. Without it, a
+    // dropped link looks exactly like an operator who has not pressed the
+    // button yet, and there is no way to tell them apart from in here.
+    const ligado = relaySock && relaySock.readyState === 1;
+    ctx.font = '34px ui-rounded, -apple-system, sans-serif';
+    ctx.fillStyle = ligado ? '#6fd44a' : '#e2564f';
+    ctx.fillText(ligado ? '\u25cf ligado ao painel de controlo'
+                        : '\u25cf sem liga\u00e7\u00e3o ao painel de controlo', W / 2, 372);
     tex.needsUpdate = true;
     return;
   }

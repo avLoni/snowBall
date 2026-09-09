@@ -688,7 +688,6 @@ function desenhar() {
   // Every pane is drawn from the same scene: only the actors belonging to
   // that player are made visible for the pass, and the viewport is
   // scissored to the rectangle its DOM tile occupies.
-  const dpr = render.getPixelRatio();
   const alturaJanela = innerHeight;
   render.clear();
   for (const [id, f] of feeds) {
@@ -698,8 +697,12 @@ function desenhar() {
     for (const o of feeds.values()) o.actores.raiz.visible = false;
     f.actores.raiz.visible = true;
 
-    const x = r.left * dpr, y = (alturaJanela - r.bottom) * dpr;
-    const l = r.width * dpr, h = r.height * dpr;
+    // CSS pixels, not buffer pixels: three.js multiplies by the pixel ratio
+    // itself. Doing it here as well shrank every pane by exactly the
+    // resolution scale, which is why the picture crept into the corner as
+    // the adaptive scaler wound down.
+    const x = r.left, y = alturaJanela - r.bottom;
+    const l = r.width, h = r.height;
     render.setViewport(x, y, l, h);
     render.setScissor(x, y, l, h);
     f.actores.camara.aspect = r.width / r.height;
