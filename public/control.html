@@ -314,12 +314,40 @@ FICHEIROS_NEVE.forEach((f, idx) => {
 });
 
 let gingerFonte = null, gingerAnims = [];
+
+// Declared at module level, not inside the load callback: a headset that
+// connects before the model finishes downloading still needs this to
+// exist. When it lived in the callback, an early arrival threw and the
+// panel stayed empty for the rest of the session.
+function montarGinger(A) {
+  if (A.ginger || !gingerFonte) return;
+  // A skinned mesh cannot be copied with .clone(): the copies would share
+  // a single skeleton and every gingerbread on screen would move as one.
+  const m = clonarComEsqueleto(gingerFonte);
+  A.ginger = new THREE.Group();
+  A.ginger.add(m);
+  A.ginger.visible = false;
+  A.raiz.add(A.ginger);
+  if (gingerAnims.length) {
+    A.mixer = new THREE.AnimationMixer(m);
+    for (const c of gingerAnims) {
+      const a = A.mixer.clipAction(c);
+      const nome = c.name.replace(/^gb_/, '');
+      a.loop = nome === 'idle' ? THREE.LoopRepeat : THREE.LoopOnce;
+      if (nome !== 'idle') a.clampWhenFinished = true;
+      A.clips[nome] = a;
+    }
+  }
+}
+
 new GLTFLoader().load('gingerbread.glb', (gltf) => {
   materialBarato(gltf.scene);
   const c = new THREE.Box3().setFromObject(gltf.scene);
   gltf.scene.scale.setScalar(1.15 / Math.max(c.max.y - c.min.y, 0.01));
   gingerFonte = gltf.scene;
   gingerAnims = gltf.animations;
+  // Fit one to every pane already on screen.
+  for (const f of feeds.values()) montarGinger(f.actores);
 }, undefined, () => {});
 
 const RAIOS = [0.78, 0.52, 0.36];
