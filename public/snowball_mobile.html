@@ -59,13 +59,30 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <style>
-    html,body { overscroll-behavior:none; touch-action:none; }
+    /* Scrolling has to keep working on the menu — only the game itself
+       locks the page down. */
+    body.a-jogar { overscroll-behavior: none; touch-action: none; overflow: hidden; }
+    body.a-jogar canvas {
+      display: block !important;
+      position: fixed; inset: 0;
+      width: 100vw !important; height: 100vh !important;
+      z-index: 1;
+    }
   </style>
 </head>
 <body>
 <!-- Screen furniture for the phone build: a crosshair where the ball will
      go, and the score where a thumb will not cover it. -->
-<div id="mira" style="display:none;position:fixed;inset:0;pointer-events:none;z-index:5">
+<div id="hudMovel" style="visibility:hidden;position:fixed;top:0;left:0;right:0;z-index:11;
+     padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 12px;pointer-events:none;
+     font:600 15px ui-rounded,-apple-system,system-ui,sans-serif;color:#eaf0ff;
+     text-shadow:0 1px 5px rgba(0,0,0,.75);
+     display:flex;justify-content:space-between;align-items:center;gap:14px">
+  <span id="hPontos">0</span>
+  <span id="hTempo" style="font-size:19px;font-weight:800"></span>
+  <span id="hBolas"></span>
+</div>
+<div id="mira" style="display:none;position:fixed;inset:0;pointer-events:none;z-index:10">
   <svg viewBox="0 0 100 100" style="position:absolute;left:50%;top:50%;width:74px;height:74px;transform:translate(-50%,-50%)">
     <circle cx="50" cy="50" r="26" fill="none" stroke="rgba(255,255,255,.72)" stroke-width="2.5"/>
     <circle cx="50" cy="50" r="2.6" fill="rgba(255,255,255,.92)"/>
@@ -3496,7 +3513,20 @@ function desenharFrame() {
     }
 
     hudTimer += dt;
-    if (hudTimer > 0.1) { hudTimer = 0; buildDiag(); drawHUD(); }
+    if (hudTimer > 0.1) {
+      hudTimer = 0;
+      buildDiag();
+      // The 3D panel is pinned in the world, so on a phone it slides out of
+      // frame the moment you turn. The readout lives on the screen instead.
+      hudPanel.mesh.visible = false;
+      const p = document.getElementById('hPontos');
+      if (p) {
+        p.textContent = game.score + (game.streak > 1 ? '  \u00d7' + game.streak : '');
+        document.getElementById('hTempo').textContent =
+          game.finished ? 'fim' : Math.max(0, Math.ceil(game.timeLeft)) + 's';
+        document.getElementById('hBolas').textContent = '\u2744 ' + game.ammo;
+      }
+    }
 
     renderer.render(scene, camera);
 }
@@ -3514,9 +3544,24 @@ enterBtn.addEventListener('click', () => {
   actx.resume().catch(() => {});
   decodeClips();
 
+  // The canvas is hidden by the shared stylesheet because the headset
+  // build draws into the XR layer, not into the page. Here it IS the game.
+  document.body.classList.add('a-jogar');
+  const ajustarTamanho = () => {
+    const l = window.innerWidth, a = window.innerHeight;
+    renderer.setSize(l, a, false);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    camera.aspect = l / a;
+    camera.updateProjectionMatrix();
+  };
+  ajustarTamanho();
+  window.addEventListener('resize', ajustarTamanho);
+  window.addEventListener('orientationchange', () => setTimeout(ajustarTamanho, 250));
+
   ligarGiro();
   ligarArrasto(renderer.domElement);
   document.getElementById('mira').style.display = 'block';
+  document.getElementById('hudMovel').style.visibility = 'visible';
 
   // Tapping the canvas throws. One tap, one snowball \u2014 the charge-up
   // gesture the headset build has needs two hands, so it is not offered.
