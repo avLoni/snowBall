@@ -573,6 +573,7 @@ function closeRelay() {
 }
 
 const r2 = v => Math.round(v * 100) / 100;
+const r3 = v => Math.round(v * 1000) / 1000;
 function relayState(now) {
   if (!relaySock || relaySock.readyState !== 1) return;
   if (now - relayLast < 1000 / CFG.relayHz) return;
@@ -600,6 +601,11 @@ function relayState(now) {
       // spectator view can put the camera over their shoulder instead of
       // guessing; and the gingerbread, who is half the show.
       pl: [r2(camPos.x), r2(camPos.y), r2(camPos.z), r2(playfieldYaw)],
+      // Head orientation, so a spectator can sit exactly where the player's
+      // eyes are. Safari will not let an immersive session be screen-shared,
+      // so the view is rebuilt rather than streamed — same world, same
+      // instant, same viewpoint.
+      hq: [r3(camQuat.x), r3(camQuat.y), r3(camQuat.z), r3(camQuat.w)],
       elf: elfGroup.visible
         ? [r2(elfGroup.position.x), r2(elfGroup.position.y), r2(elfGroup.position.z),
            r2(elfGroup.rotation.y), elf.state]

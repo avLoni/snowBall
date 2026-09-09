@@ -33,7 +33,25 @@
 
   #espera { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
             flex-direction:column; gap:10px; z-index:8; background:#0b1020; text-align:center; padding:24px; }
-  #espera h1 { font-size:25px; margin:0; font-weight:750; }
+  #jogadores { position:fixed; top:74px; left:20px; z-index:6; display:flex; gap:8px; flex-wrap:wrap; }
+#jogadores button { padding:8px 14px; border:1px solid rgba(255,255,255,.16);
+  background:var(--caixa); color:var(--texto); border-radius:9px; cursor:pointer;
+  font:inherit; font-size:13px; backdrop-filter:blur(8px); }
+#jogadores button.on { background:#3d6bd6; border-color:#5b8cff; }
+#jogadores button .pt { color:var(--suave); margin-left:7px; }
+#jogadores button.on .pt { color:#cfe0ff; }
+
+#grelha { position:fixed; inset:0; z-index:7; background:#080d1a; padding:16px;
+  display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+  align-content:start; overflow:auto; }
+.painelJog { background:#0f1626; border:1px solid #1e2637; border-radius:14px;
+  padding:12px; cursor:pointer; transition:border-color .15s; }
+.painelJog:hover { border-color:#5b8cff; }
+.painelJog h3 { margin:0 0 3px; font-size:16px; }
+.painelJog .linha { color:var(--suave); font-size:12.5px; margin-bottom:9px; }
+.painelJog canvas { width:100%; height:auto; display:block; border-radius:9px; background:#0a1020; }
+
+#espera h1 { font-size:25px; margin:0; font-weight:750; }
   #espera p { color:var(--suave); margin:0; max-width:38ch; line-height:1.55; }
   .oculto { display:none !important; }
 </style>
@@ -50,10 +68,17 @@
 <div id="estado" class="oculto">ligação <b id="eLigacao">—</b> · <b id="eFps">0</b> act/s</div>
 
 <div id="vistas" class="oculto">
+  <button data-v="olhos">Pelos olhos dele</button>
   <button data-v="ombro" class="on">Sobre o ombro</button>
   <button data-v="lado">De lado</button>
   <button data-v="alto">De cima</button>
 </div>
+
+<!-- One tab per headset in play. Hidden while only one person is on. -->
+<div id="jogadores" class="oculto"></div>
+
+<!-- Every player at once, as plan views. Click one to open it in 3D. -->
+<div id="grelha" class="oculto"></div>
 
 <div id="espera">
   <h1>À espera do jogador</h1>
@@ -286,8 +311,19 @@ function tocarGinger(nome) {
 //  Two snapshots are kept at all times and the render blends between
 //  them, so a 15 Hz stream draws as smooth motion.
 // ═══════════════════════════════════════════════════════════
-let anterior = null, actual = null, tRecebido = 0, contagem = 0, actsPorSeg = 0;
+// One entry per headset. Which one the 3D view follows is `seguido`;
+// the rest keep updating in the background so the grid stays live.
+const feeds = new Map();     // id -> { nome, ant, act, t }
+let seguido = null;
+let contagem = 0, actsPorSeg = 0;
 let sock = null;
+let emGrelha = false;
+
+function feed(id) {
+  let f = feeds.get(id);
+  if (!f) { f = { nome: id, ant: null, act: null, t: 0 }; feeds.set(id, f); }
+  return f;
+}
 
 function ligar() {
   const url = location.origin.replace(/^http/, 'ws') + '/ws?role=viewer';
@@ -295,14 +331,26 @@ function ligar() {
   sock.onopen = () => { $('eLigacao').textContent = 'ligada'; };
   sock.onmessage = (ev) => {
     let d; try { d = JSON.parse(ev.data); } catch (_) { return; }
-    if (d.ev === 'hello') { if (d.player) $('hNome').textContent = d.player.name || 'jogador'; }
-    else if (d.ev === 'player') {
-      if (!d.online) { $('espera').classList.remove('oculto'); $('espMsg').textContent = 'O jogador saiu.'; }
+    if (d.ev === 'hello' || d.ev === 'players') {
+      for (const p of (d.players || [])) feed(p.id).nome = p.name;
+      // Drop anyone who has gone.
+      const vivos = new Set((d.players || []).map(p => p.id));
+      for (const id of [...feeds.keys()]) if (!vivos.has(id)) feeds.delete(id);
+      if (seguido && !feeds.has(seguido)) seguido = null;
+      if (!seguido && feeds.size) seguido = [...feeds.keys()][0];
+      desenharSeparadores();
+      if (!feeds.size) {
+        $('espera').classList.remove('oculto');
+        $('espMsg').textContent = 'Nenhum jogador ligado.';
+      }
     }
     else if (d.ev === 'state') {
-      anterior = actual; actual = d; tRecebido = performance.now(); contagem++;
+      const f = feed(d.id || 'p');
+      f.ant = f.act; f.act = d; f.t = performance.now();
+      contagem++;
+      if (!seguido) { seguido = d.id || 'p'; desenharSeparadores(); }
       mostrarJogo();
-      aplicarPainel(d);
+      if ((d.id || 'p') === seguido) aplicarPainel(d);
     }
   };
   sock.onclose = () => { $('eLigacao').textContent = 'perdida — a tentar'; setTimeout(ligar, 2500); };
@@ -321,7 +369,108 @@ function aplicarPainel(d) {
   $('hSeguidas').textContent = d.streak ?? 0;
   $('hModo').textContent = MODOS[d.m] || d.m || '';
 }
-setInterval(() => { actsPorSeg = contagem; contagem = 0; $('eFps').textContent = actsPorSeg; }, 1000);
+setInterval(() => {
+  actsPorSeg = contagem; contagem = 0;
+  $('eFps').textContent = actsPorSeg;
+  if (feeds.size > 1) desenharSeparadores();
+}, 1000);
+
+// ── player tabs ──
+function desenharSeparadores() {
+  const cx = $('jogadores');
+  const ids = [...feeds.keys()];
+  // With one headset there is nothing to choose, so the bar stays away.
+  cx.classList.toggle('oculto', ids.length < 2);
+  cx.innerHTML = ids.map(id => {
+    const f = feeds.get(id);
+    const p = f.act ? f.act.score : 0;
+    return `<button data-id="${id}" class="${id === seguido ? 'on' : ''}">` +
+           `${escapar(f.nome)}<span class="pt">${p}</span></button>`;
+  }).join('') + (ids.length > 1
+    ? `<button data-grelha="1" class="${emGrelha ? 'on' : ''}">Todos</button>` : '');
+  for (const b of cx.querySelectorAll('button')) {
+    b.onclick = () => {
+      if (b.dataset.grelha) { emGrelha = true; }
+      else { seguido = b.dataset.id; emGrelha = false; }
+      $('grelha').classList.toggle('oculto', !emGrelha);
+      desenharSeparadores();
+    };
+  }
+}
+const escapar = t => String(t).replace(/[<>&"]/g, c =>
+  ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]);
+
+// ── grid of plan views ──
+// A 3D scene per player would cost four times the frame; a plan view says
+// everything an operator needs — where they are aiming and how they are
+// doing — and clicking one opens the full render.
+const planos = new Map();
+function actualizarGrelha() {
+  const cx = $('grelha');
+  for (const [id, f] of feeds) {
+    let p = planos.get(id);
+    if (!p) {
+      const div = document.createElement('div');
+      div.className = 'painelJog';
+      div.innerHTML = `<h3></h3><div class="linha"></div><canvas width="300" height="190"></canvas>`;
+      div.onclick = () => { seguido = id; emGrelha = false;
+                            cx.classList.add('oculto'); desenharSeparadores(); };
+      cx.appendChild(div);
+      p = { div, h3: div.querySelector('h3'), linha: div.querySelector('.linha'),
+            cv: div.querySelector('canvas') };
+      planos.set(id, p);
+    }
+    const d = f.act;
+    p.h3.textContent = f.nome;
+    p.linha.textContent = d ? `${d.score} pontos · ${d.t ?? '—'}s · ${MODOS[d.m] || ''}` : 'a aguardar';
+    pintarPlano(p.cv.getContext('2d'), d);
+  }
+  for (const [id, p] of planos) if (!feeds.has(id)) { p.div.remove(); planos.delete(id); }
+}
+
+function pintarPlano(g, d) {
+  const L = g.canvas.width, A = g.canvas.height;
+  g.fillStyle = '#0a1020'; g.fillRect(0, 0, L, A);
+  if (!d) return;
+  const pl = d.pl || [0, 1.6, 0, 0];
+  // 24 m across, player near the bottom, looking up the canvas.
+  const esc = A / 24;
+  const px = L / 2, py = A - 26;
+  const yaw = pl[3] || 0;
+  const ecra = (x, z) => {
+    const dx = x - pl[0], dz = z - pl[2];
+    const c = Math.cos(-yaw), s = Math.sin(-yaw);
+    return [px + (dx * c - dz * s) * esc, py + (dx * s + dz * c) * esc];
+  };
+  // the cannon's aim
+  g.strokeStyle = 'rgba(91,140,255,.5)'; g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(px, py);
+  const a = (d.yaw || 0) - Math.PI / 2;
+  g.lineTo(px + Math.cos(a) * 78, py + Math.sin(a) * 78); g.stroke();
+  // targets
+  for (const [x, y, z, tier, morto] of (d.tg || [])) {
+    const [sx, sy] = ecra(x, z);
+    g.fillStyle = morto ? 'rgba(120,130,150,.35)'
+                : ['#ffffff', '#ffd166', '#ff5fa2'][tier] || '#fff';
+    g.beginPath(); g.arc(sx, sy, [7, 5, 3.6][tier] || 5, 0, 7); g.fill();
+  }
+  // snowballs
+  g.fillStyle = '#9fd0ff';
+  for (const [x, , z] of (d.balls || [])) {
+    const [sx, sy] = ecra(x, z);
+    g.beginPath(); g.arc(sx, sy, 2.4, 0, 7); g.fill();
+  }
+  // the gingerbread
+  if (d.elf) {
+    const [x, , z] = d.elf;
+    const [sx, sy] = ecra(x, z);
+    g.fillStyle = '#d99a52';
+    g.beginPath(); g.arc(sx, sy, 6, 0, 7); g.fill();
+  }
+  // the player
+  g.fillStyle = '#5b8cff';
+  g.beginPath(); g.arc(px, py, 5, 0, 7); g.fill();
+}
 
 // ── view modes ──
 let vista = 'ombro';
@@ -333,8 +482,20 @@ for (const b of document.querySelectorAll('#vistas button')) {
 }
 
 const alvoCam = new THREE.Vector3();
-function moverCamara(px, py, pz, pyaw, dt) {
+const qCabeca = new THREE.Quaternion();
+function moverCamara(px, py, pz, pyaw, dt, hq) {
   const frente = new THREE.Vector3(-Math.sin(pyaw), 0, -Math.cos(pyaw));
+  if (vista === 'olhos') {
+    // Sitting where their eyes are. Not a screen capture — Safari will not
+    // share an immersive session — but the same world at the same instant
+    // from the same place, which is what an onlooker actually wants.
+    camara.position.set(px, py, pz);
+    if (hq) {
+      qCabeca.set(hq[0], hq[1], hq[2], hq[3]);
+      camara.quaternion.slerp(qCabeca, 1 - Math.pow(0.0001, dt));
+    }
+    return;
+  }
   if (vista === 'ombro') {
     alvoCam.set(px - frente.x * 3.4, py + 1.5, pz - frente.z * 3.4);
     camara.position.lerp(alvoCam, 1 - Math.pow(0.002, dt));
@@ -361,6 +522,13 @@ function desenhar() {
   ultimo = agora;
   if (gingerMixer) gingerMixer.update(dt);
 
+  if (emGrelha) { actualizarGrelha(); render.render(cena, camara); return; }
+
+  const f = seguido ? feeds.get(seguido) : null;
+  const actual = f && f.act;
+  const anterior = f && f.ant;
+  const tRecebido = f ? f.t : 0;
+
   if (actual) {
     // How far between the last two snapshots we are, capped so a dropped
     // packet freezes rather than extrapolating into nonsense.
@@ -371,8 +539,12 @@ function desenhar() {
     const plA = (a.pl || pl);
     const px = misturar(plA[0], pl[0], k), py = misturar(plA[1], pl[1], k), pz = misturar(plA[2], pl[2], k);
     jogador.position.set(px, 0.02, pz);
-    moverCamara(px, py, pz, pl[3] || 0, dt);
+    moverCamara(px, py, pz, pl[3] || 0, dt, actual.hq);
 
+    // From inside their own head the barrel would fill the frame, so it
+    // shrinks out of the way in first person.
+    canhao.visible = vista !== 'olhos';
+    jogador.visible = vista !== 'olhos';
     canhao.position.set(px, actual.cy ?? 1.0, pz);
     canhao.rotation.y = pl[3] || 0;
     giro.rotation.y = misturar(a.yaw ?? 0, actual.yaw ?? 0, k);

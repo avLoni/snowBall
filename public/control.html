@@ -50,6 +50,8 @@
   td:last-child { text-align: right; font-weight: 650; color: var(--amarelo); }
   tr:last-child td { border-bottom: none; }
 
+  .oculto { display:none !important; }
+  #listaJog button { font-size:15px; padding:14px 10px; }
   .aviso { font-size: 13px; color: var(--suave); margin-top: 9px; line-height: 1.5; }
   .barra { height: 7px; background: #101a2c; border-radius: 4px; overflow: hidden; margin-top: 6px; }
   .barra i { display: block; height: 100%; background: var(--azul); width: 0; transition: width .2s; }
@@ -60,6 +62,12 @@
 <h1>Bolas de Neve</h1>
 <div class="estado"><span class="ponto" id="ponto"></span><span id="ligacao">a ligar…</span></div>
 
+<!-- Only shown when more than one headset is connected. -->
+<div class="cartao oculto" id="cxJogadores">
+  <label>Comandar</label>
+  <div id="listaJog" class="botoes" style="margin-top:0"></div>
+</div>
+
 <div class="cartao">
   <label for="nome">Nome do jogador</label>
   <input type="text" id="nome" placeholder="escreve aqui" autocomplete="off" enterkeyhint="done">
@@ -69,7 +77,7 @@
     <button class="secundario largo" id="recal">Repetir calibração</button>
   </div>
   <div class="botoes" style="margin-top:11px">
-    <a class="secundario largo" id="verJogo" href="/watch" target="_blank"
+    <a class="secundario largo" id="verJogo" href="/watch" target="_blank" rel="noopener"
        style="display:block;text-align:center;text-decoration:none;line-height:1.2">
       Ver o jogo ao vivo ↗
     </a>
@@ -112,9 +120,12 @@ function ligar() {
   sock.onmessage = (e) => {
     let d; try { d = JSON.parse(e.data); } catch (_) { return; }
 
-    if (d.ev === 'hello') {
-      marcarJogador(!!d.player);
-      if (d.player && d.player.name) $('nome').value = d.player.name;
+    if (d.ev === 'hello' || d.ev === 'players') {
+      jogadores = d.players || (d.player ? [d.player] : []);
+      if (alvo && !jogadores.some(p => p.id === alvo)) alvo = null;
+      marcarJogador(jogadores.length > 0);
+      if (jogadores.length === 1 && jogadores[0].name) $('nome').value = jogadores[0].name;
+      desenharJogadores();
       if (d.scores) tabela(d.scores);
     }
     else if (d.ev === 'player') marcarJogador(d.online);
@@ -162,9 +173,27 @@ function tabela(lista) {
 const escapar = s => String(s).replace(/[<>&"]/g, c =>
   ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]);
 
+// Which headset the buttons act on. Null means all of them, which is what
+// a single-headset setup wants and what most sessions will be.
+let jogadores = [], alvo = null;
+
+function desenharJogadores() {
+  const cx = $('cxJogadores'), lista = $('listaJog');
+  cx.classList.toggle('oculto', jogadores.length < 2);
+  if (jogadores.length < 2) { alvo = null; return; }
+  lista.innerHTML =
+    `<button class="secundario ${alvo === null ? 'arrancar' : ''}" data-id="">Todos</button>` +
+    jogadores.map(p =>
+      `<button class="secundario ${alvo === p.id ? 'arrancar' : ''}" data-id="${p.id}">${escapar(p.name)}</button>`
+    ).join('');
+  for (const b of lista.querySelectorAll('button')) {
+    b.onclick = () => { alvo = b.dataset.id || null; desenharJogadores(); };
+  }
+}
+
 function enviar(cmd, value) {
   if (!sock || sock.readyState !== 1) return;
-  sock.send(JSON.stringify({ cmd, value }));
+  sock.send(JSON.stringify({ cmd, value, target: alvo }));
 }
 
 $('arrancar').onclick = () => {

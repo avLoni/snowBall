@@ -155,6 +155,16 @@ const servidor = createServer(async (req, res) => {
 // ── WebSocket ───────────────────────────────────────────────
 const wss = new WebSocketServer({ server: servidor, path: '/ws' });
 
+// Several headsets can be running at once — a queue of children at an
+// event, say. Viewers get told who is playing so they can pick, and every
+// state packet carries the id it came from.
+function listaJogadores() {
+  return [...players].map(p => ({ id: p.meta.id, name: p.meta.name || 'jogador' }));
+}
+function difundirLista() {
+  difundir({ ev: 'players', players: listaJogadores() });
+}
+
 function difundir(obj, para = viewers) {
   const txt = JSON.stringify(obj);
   for (const c of para) {
@@ -173,14 +183,14 @@ wss.on('connection', (sock, req) => {
 
   if (papel === 'player') {
     players.add(sock);
-    difundir({ ev: 'player', online: true, id: sock.meta.id, name: sock.meta.name });
+    difundirLista();
   } else {
     viewers.add(sock);
     // Bring the new panel up to date straight away.
-    const p = [...players][0];
     sock.send(JSON.stringify({
       ev: 'hello',
-      player: p ? { id: p.meta.id, name: p.meta.name } : null,
+      players: listaJogadores(),
+      player: listaJogadores()[0] || null,   // kept for the older panel
       scores: scores.slice(0, 10)
     }));
   }
@@ -202,6 +212,10 @@ wss.on('connection', (sock, req) => {
     if (!PERMITIDOS.has(d.cmd)) return;
     const msg = JSON.stringify({ ev: 'cmd', cmd: d.cmd, value: d.value ?? null });
     for (const p of players) {
+      // A command aimed at one player leaves the others alone; without a
+      // target it goes to everyone, which is what a single-headset setup
+      // wants and what the panel sends by default.
+      if (d.target && p.meta.id !== d.target) continue;
       if (p.readyState === 1) { try { p.send(msg); } catch (e) {} }
     }
     // Echo to the other panels so two operators do not fight each other.
@@ -216,6 +230,7 @@ wss.on('connection', (sock, req) => {
     players.delete(sock); viewers.delete(sock);
     if (papel === 'player') {
       difundir({ ev: 'player', online: players.size > 0, id: sock.meta.id });
+      difundirLista();
     }
   });
   sock.on('error', () => {});
