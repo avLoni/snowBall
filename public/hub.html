@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spatial Lab</title>
+<style>
+  /* ─── tokens ────────────────────────────────────────────
+     Palette taken from the scenes themselves: the void black
+     of an immersive session, the blue of the grid floor, and
+     the amber of the string lights in the snow arena.        */
+  :root {
+    --void:   #070a12;
+    --surface:#10151f;
+    --raised: #161d2b;
+    --line:   #1e2637;
+    --snow:   #eef3ff;
+    --dim:    #7d879e;
+    --faint:  #4a5468;
+    --beam:   #5b8cff;
+    --ember:  #ffb45c;
+    --good:   #5ce39a;
+
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 0 24px 120px;
+    background: var(--void);
+    color: var(--snow);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 680px; margin: 0 auto; }
+
+  /* ─── masthead ─────────────────────────────────────────── */
+  header { padding: 72px 0 40px; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0 0 18px;
+  }
+
+  h1 {
+    font-size: clamp(46px, 13vw, 78px);
+    font-weight: 800;
+    letter-spacing: -0.045em;
+    line-height: 0.92;
+    margin: 0 0 20px;
+  }
+  h1 em {
+    font-style: normal;
+    color: var(--beam);
+  }
+
+  .blurb {
+    color: var(--dim);
+    font-size: 17px;
+    line-height: 1.55;
+    max-width: 46ch;
+    margin: 0;
+  }
+
+  /* ─── capability probe ─────────────────────────────────── */
+  .probe {
+    margin: 40px 0 56px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .probe-head {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--faint);
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .probe-row {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    padding: 11px 18px;
+    font-family: var(--mono);
+    font-size: 13.5px;
+  }
+  .probe-row + .probe-row { border-top: 1px solid rgba(30,38,55,0.6); }
+  .probe-key { color: var(--dim); flex: 1; }
+  .probe-val { font-weight: 600; letter-spacing: 0.02em; }
+  .yes { color: var(--good); }
+  .no  { color: var(--ember); }
+  .wait{ color: var(--faint); }
+  .probe-note {
+    padding: 13px 18px 15px;
+    border-top: 1px solid var(--line);
+    font-size: 13px;
+    color: var(--faint);
+    line-height: 1.5;
+  }
+
+  /* ─── experience list ──────────────────────────────────── */
+  .list-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0 0 16px;
+  }
+
+  .card {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 18px;
+    margin-bottom: 14px;
+    transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+  }
+  .card:hover, .card:focus-visible {
+    border-color: rgba(91,140,255,0.55);
+    background: var(--raised);
+    outline: none;
+  }
+  .card:focus-visible { box-shadow: 0 0 0 3px rgba(91,140,255,0.35); }
+
+  /* ─── the signature: a stereo pair ─────────────────────────
+     Everything in this lab renders twice, once per eye. The
+     thumbnails do the same — two views of one glyph with a few
+     pixels of horizontal disparity, which widens on hover.     */
+  .stereo {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px;
+    margin-bottom: 16px;
+  }
+  .eye {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: #0a0f1a;
+    border-radius: 9px;
+    overflow: hidden;
+  }
+  .eye svg { display: block; width: 100%; height: 100%; }
+  .eye .shift {
+    transition: transform 220ms cubic-bezier(.2,.7,.3,1);
+  }
+  .eye.l .shift { transform: translateX(5px); }
+  .eye.r .shift { transform: translateX(-5px); }
+  .card:hover .eye.l .shift,
+  .card:focus-visible .eye.l .shift { transform: translateX(11px); }
+  .card:hover .eye.r .shift,
+  .card:focus-visible .eye.r .shift { transform: translateX(-11px); }
+
+  /* The phone build renders one view, not two. Rather than fake a stereo
+     pair for it, its thumbnail spans both columns and says so. */
+  .stereo.mono { grid-template-columns: 1fr; }
+  .stereo.mono .eye { aspect-ratio: 32 / 9; }
+  .stereo.mono .eye .shift { transform: none; }
+  .card:hover .stereo.mono .eye .shift { transform: none; }
+
+  .eye::after {
+    content: attr(data-eye);
+    position: absolute;
+    top: 7px; left: 8px;
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    color: var(--faint);
+  }
+
+  .card h2 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 5px;
+  }
+  .card p {
+    color: var(--dim);
+    font-size: 15px;
+    line-height: 1.5;
+    margin: 0 0 14px;
+  }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 5px 9px;
+    border-radius: 6px;
+    background: rgba(91,140,255,0.1);
+    color: #9bb6ff;
+    border: 1px solid rgba(91,140,255,0.2);
+  }
+  .chip.phone {
+    background: rgba(92,227,154,0.1);
+    color: var(--good);
+    border-color: rgba(92,227,154,0.22);
+  }
+  .card.highlight {
+    border-color: rgba(92,227,154,0.5);
+    background: var(--raised);
+  }
+  .card.highlight::before {
+    content: 'runs on this device';
+    display: block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--good);
+    margin-bottom: 12px;
+  }
+
+  .chip.warm {
+    background: rgba(255,180,92,0.1);
+    color: var(--ember);
+    border-color: rgba(255,180,92,0.22);
+  }
+
+  footer {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.7;
+    color: var(--faint);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <p class="eyebrow">Vision Pro · WebXR · Phone</p>
+    <h1>Spatial<br><em>Lab</em></h1>
+    <p class="blurb">Experiments that run straight from the browser. No install,
+       no App Store, no cable. Most want a headset; one runs on the phone
+       in your hand.</p>
+  </header>
+
+  <section class="probe" aria-live="polite">
+    <div class="probe-head">This device, right now</div>
+    <div class="probe-row"><span class="probe-key">secure context</span><span class="probe-val wait" id="p-secure">checking</span></div>
+    <div class="probe-row"><span class="probe-key">immersive-vr</span><span class="probe-val wait" id="p-vr">checking</span></div>
+    <div class="probe-row"><span class="probe-key">immersive-ar</span><span class="probe-val wait" id="p-ar">checking</span></div>
+    <div class="probe-row"><span class="probe-key">&lt;model&gt; element</span><span class="probe-val wait" id="p-model">checking</span></div>
+    <div class="probe-row"><span class="probe-key">device orientation</span><span class="probe-val wait" id="p-gyro">checking</span></div>
+    <p class="probe-note" id="p-note">Reading capabilities…</p>
+  </section>
+
+  <p class="list-label">Experiments</p>
+  <div id="cards"></div>
+
+  <footer>
+    Bump BUILD in the source after each deploy — Safari on visionOS caches hard.<br>
+    Add an experiment by appending one entry to the EXPERIENCES array.
+  </footer>
+
+</div>
+
+<script type="module">
+// ═══════════════════════════════════════════════════════════
+//  Add a new experiment here and it appears on the page.
+//  Bump BUILD whenever you deploy, so Safari fetches fresh files.
+// ═══════════════════════════════════════════════════════════
+const BUILD = 5;
+
+const EXPERIENCES = [
+  {
+    file: 'snowball.html',
+    title: 'Snowball Challenge',
+    line: 'Sixty seconds to hit moving snowmen across a winter arena. Pinch to scoop, follow through to throw. Combos, distance bonuses, leaderboard.',
+    chips: ['immersive', 'hand tracking', 'scored'],
+    glyph: 'snow'
+  },
+  {
+    file: 'snowball_mobile.html',
+    title: 'Snowball — Phone',
+    line: 'The same arena on a phone. Point the handset to aim, tap to throw. No headset, no calibration — the device already knows which way it faces.',
+    chips: ['no headset', 'gyro aiming', 'scored'],
+    glyph: 'phone',
+    mono: true,
+    noXR: true          // the one entry that works without WebXR
+  },
+  {
+    file: 'hands.html',
+    title: 'Hand Test',
+    line: 'Every tracked joint drawn as a dot. Punch, slap and grab six floating balls. A panel reports live joint counts and hand speed.',
+    chips: ['immersive', 'hand tracking', 'diagnostic'],
+    glyph: 'hand'
+  },
+  {
+    file: 'orbs.html',
+    title: 'Orb Room',
+    line: 'Pinch anywhere to launch a glowing orb into a dark void. It falls, bounces, and chimes wherever it lands. Also holds a 3D model you can pull into your room.',
+    chips: ['immersive', 'gaze + pinch', 'quick look'],
+    glyph: 'orb'
+  }
+];
+
+// ─── glyphs ────────────────────────────────────────────────
+// Drawn once, rendered twice per card with opposing disparity.
+const GLYPHS = {
+  orb: `
+    <g class="shift">
+      <path d="M0 74 H160" stroke="#233052" stroke-width="1"/>
+      <path d="M22 74 L52 40 M62 74 L78 40 M100 74 L86 40 M138 74 L110 40"
+            stroke="#1c2743" stroke-width="1"/>
+      <circle cx="52" cy="34" r="9" fill="#5b8cff" opacity="0.9"/>
+      <circle cx="92" cy="47" r="6.5" fill="#ff7fb5" opacity="0.85"/>
+      <circle cx="119" cy="27" r="5" fill="#ffd166" opacity="0.85"/>
+    </g>`,
+  hand: `
+    <g class="shift">
+      <path d="M46 76 L52 50 M58 74 L70 42 M74 74 L86 38 M90 74 L100 44 M104 72 L112 52"
+            stroke="#243256" stroke-width="1.5" stroke-linecap="round"/>
+      <g fill="#8fb2ff">
+        <circle cx="46" cy="76" r="3.4"/><circle cx="52" cy="50" r="2.6"/>
+        <circle cx="58" cy="74" r="2.8"/><circle cx="70" cy="42" r="2.4"/>
+        <circle cx="74" cy="74" r="2.8"/><circle cx="86" cy="38" r="2.4"/>
+        <circle cx="90" cy="74" r="2.8"/><circle cx="100" cy="44" r="2.4"/>
+        <circle cx="104" cy="72" r="2.6"/><circle cx="112" cy="52" r="2.2"/>
+      </g>
+      <circle cx="124" cy="30" r="8" fill="none" stroke="#5b8cff" stroke-width="1.5" opacity="0.7"/>
+    </g>`,
+  phone: `
+    <g class="shift">
+      <path d="M0 74 H320" stroke="#233052" stroke-width="1"/>
+      <rect x="132" y="20" width="34" height="58" rx="6"
+            fill="#0f1626" stroke="#5b8cff" stroke-width="1.6"/>
+      <circle cx="149" cy="49" r="7" fill="none" stroke="#8fb2ff" stroke-width="1.4"/>
+      <path d="M149 36v5 M149 57v5 M136 49h5 M157 49h5"
+            stroke="#8fb2ff" stroke-width="1.4"/>
+      <path d="M172 44 Q214 26 250 40" stroke="#33456e" stroke-width="1"
+            stroke-dasharray="3 4" fill="none"/>
+      <circle cx="256" cy="44" r="10" fill="#ffb45c" opacity="0.9"/>
+      <circle cx="256" cy="31" r="6.5" fill="#ffb45c" opacity="0.75"/>
+      <g fill="#ffffff" opacity="0.5">
+        <circle cx="44" cy="22" r="1.5"/><circle cx="86" cy="14" r="1.2"/>
+        <circle cx="248" cy="16" r="1.3"/><circle cx="300" cy="26" r="1.2"/>
+      </g>
+    </g>`,
+  snow: `
+    <g class="shift">
+      <path d="M0 78 Q40 70 80 74 T160 70 L160 90 L0 90 Z" fill="#1b2740"/>
+      <path d="M26 62 Q62 18 118 40" stroke="#33456e" stroke-width="1"
+            stroke-dasharray="3 4" fill="none"/>
+      <circle cx="26" cy="62" r="5" fill="#eef3ff"/>
+      <circle cx="124" cy="44" r="11" fill="#ffb45c" opacity="0.9"/>
+      <circle cx="124" cy="30" r="7" fill="#ffb45c" opacity="0.75"/>
+      <g fill="#ffffff" opacity="0.55">
+        <circle cx="18" cy="20" r="1.6"/><circle cx="54" cy="12" r="1.3"/>
+        <circle cx="88" cy="24" r="1.5"/><circle cx="142" cy="14" r="1.3"/>
+        <circle cx="40" cy="36" r="1.2"/><circle cx="104" cy="8" r="1.4"/>
+      </g>
+    </g>`
+};
+
+function glyphSVG(name, largo) {
+  const caixa = largo ? '0 0 320 90' : '0 0 160 90';
+  return `<svg viewBox="${caixa}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${GLYPHS[name] || ''}</svg>`;
+}
+
+// ─── render cards ──────────────────────────────────────────
+function classeChip(c) {
+  if (c === 'quick look' || c === 'scored') return ' warm';
+  if (c === 'no headset' || c === 'gyro aiming') return ' phone';
+  return '';
+}
+
+function cartao(x) {
+  const olhos = x.mono
+    ? `<div class="stereo mono">
+         <div class="eye" data-eye="MONO">${glyphSVG(x.glyph, true)}</div>
+       </div>`
+    : `<div class="stereo">
+         <div class="eye l" data-eye="L">${glyphSVG(x.glyph)}</div>
+         <div class="eye r" data-eye="R">${glyphSVG(x.glyph)}</div>
+       </div>`;
+  return `
+  <a class="card" data-noxr="${x.noXR ? 1 : 0}" href="${x.file}?v=${BUILD}">
+    ${olhos}
+    <h2>${x.title}</h2>
+    <p>${x.line}</p>
+    <div class="chips">
+      ${x.chips.map(c => `<span class="chip${classeChip(c)}">${c}</span>`).join('')}
+    </div>
+  </a>`;
+}
+
+document.getElementById('cards').innerHTML = EXPERIENCES.map(cartao).join('');
+
+// ─── capability probe ──────────────────────────────────────
+function set(id, ok, textOk, textNo) {
+  const el = document.getElementById(id);
+  el.textContent = ok ? textOk : textNo;
+  el.className = 'probe-val ' + (ok ? 'yes' : 'no');
+}
+
+(async function probe() {
+  set('p-secure', window.isSecureContext, 'yes', 'no — https required');
+  set('p-model', 'HTMLModelElement' in window, 'supported', 'not supported');
+
+  // The gyro is what the phone build aims with, so it belongs in the probe
+  // alongside the headset capabilities.
+  const temGiro = typeof DeviceOrientationEvent !== 'undefined';
+  const pedeAutorizacao = temGiro &&
+    typeof DeviceOrientationEvent.requestPermission === 'function';
+  const gyro = document.getElementById('p-gyro');
+  gyro.textContent = pedeAutorizacao ? 'on request' : (temGiro ? 'available' : 'not present');
+  gyro.className = 'probe-val ' + (temGiro ? 'yes' : 'no');
+
+  let vr = false, ar = false;
+  if (navigator.xr) {
+    try { vr = await navigator.xr.isSessionSupported('immersive-vr'); } catch (e) {}
+    try { ar = await navigator.xr.isSessionSupported('immersive-ar'); } catch (e) {}
+  }
+  set('p-vr', vr, 'supported', 'not supported');
+  set('p-ar', ar, 'supported', 'not implemented');
+
+  // When there is no headset here, the page should not read as a dead end:
+  // one of these experiments runs on whatever you are holding. Pull it to
+  // the top and flag it.
+  if (!vr) {
+    const cards = [...document.querySelectorAll('.card')];
+    const movel = cards.find(c => c.dataset.noxr === '1');
+    if (movel) {
+      movel.classList.add('highlight');
+      movel.parentNode.prepend(movel);
+    }
+  }
+
+  const note = document.getElementById('p-note');
+  if (!navigator.xr && temGiro) {
+    note.textContent = 'No WebXR here, so the immersive experiments will not run — but the phone build above will. Point the handset to aim and tap to throw. For the headset versions, open this URL in Safari on Vision Pro.';
+  } else if (!navigator.xr) {
+    note.textContent = 'No WebXR and no motion sensor on this browser. Open this URL in Safari on Vision Pro, or on a phone for the handheld build.';
+  } else if (vr && !ar) {
+    note.textContent = 'Immersive sessions work; passthrough does not. That is expected on visionOS — Safari implements immersive-vr but not immersive-ar, which is why every scene here has its own environment instead of your room.';
+  } else if (vr && ar) {
+    note.textContent = 'Both session modes available. Passthrough scenes are possible on this device.';
+  } else {
+    note.textContent = 'WebXR is present but no immersive session mode is offered here.';
+  }
+})();
+</script>
+</body>
+</html>

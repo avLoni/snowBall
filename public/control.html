@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bolas de Neve — controlo</title>
+<style>
+  :root {
+    --fundo: #0e1524; --caixa: #182338; --linha: #26344f;
+    --texto: #eaf0ff; --suave: #8fa0c0;
+    --verde: #45c66a; --vermelho: #e2564f; --azul: #4dd6ff; --amarelo: #ffd166;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--fundo); color: var(--texto);
+    font: 17px/1.45 ui-rounded, -apple-system, "Segoe UI", system-ui, sans-serif;
+    padding: 18px; padding-bottom: 40px;
+  }
+  h1 { font-size: 21px; margin: 0 0 4px; }
+  .estado { display: flex; align-items: center; gap: 9px; color: var(--suave); font-size: 15px; margin-bottom: 18px; }
+  .ponto { width: 11px; height: 11px; border-radius: 50%; background: #55617a; transition: background .2s; }
+  .ponto.on { background: var(--verde); box-shadow: 0 0 10px var(--verde); }
+
+  .cartao { background: var(--caixa); border: 1px solid var(--linha); border-radius: 16px; padding: 17px; margin-bottom: 15px; }
+  label { display: block; font-size: 14px; color: var(--suave); margin-bottom: 7px; }
+  input[type=text] {
+    width: 100%; padding: 15px; font-size: 19px; border-radius: 11px;
+    border: 1px solid var(--linha); background: #101a2c; color: var(--texto);
+  }
+  input[type=text]:focus { outline: none; border-color: var(--azul); }
+
+  .botoes { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-top: 13px; }
+  button {
+    padding: 19px 12px; font-size: 18px; font-weight: 650; border: none;
+    border-radius: 13px; color: #08101f; cursor: pointer; font-family: inherit;
+  }
+  button:active { transform: scale(.975); }
+  button:disabled { opacity: .35; }
+  .arrancar { background: var(--verde); }
+  .parar { background: var(--vermelho); color: #fff; }
+  .secundario { background: #2c3a55; color: var(--texto); font-size: 16px; padding: 14px; }
+  .largo { grid-column: 1 / -1; }
+
+  .medidores { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; text-align: center; }
+  .medidor .n { font-size: 27px; font-weight: 700; }
+  .medidor .r { font-size: 12px; color: var(--suave); text-transform: uppercase; letter-spacing: .5px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  td { padding: 7px 0; border-bottom: 1px solid var(--linha); }
+  td:last-child { text-align: right; font-weight: 650; color: var(--amarelo); }
+  tr:last-child td { border-bottom: none; }
+
+  .aviso { font-size: 13px; color: var(--suave); margin-top: 9px; line-height: 1.5; }
+  .barra { height: 7px; background: #101a2c; border-radius: 4px; overflow: hidden; margin-top: 6px; }
+  .barra i { display: block; height: 100%; background: var(--azul); width: 0; transition: width .2s; }
+</style>
+</head>
+<body>
+
+<h1>Bolas de Neve</h1>
+<div class="estado"><span class="ponto" id="ponto"></span><span id="ligacao">a ligar…</span></div>
+
+<div class="cartao">
+  <label for="nome">Nome do jogador</label>
+  <input type="text" id="nome" placeholder="escreve aqui" autocomplete="off" enterkeyhint="done">
+  <div class="botoes">
+    <button class="arrancar" id="arrancar">Começar</button>
+    <button class="parar" id="parar">Terminar</button>
+    <button class="secundario largo" id="recal">Repetir calibração</button>
+  </div>
+  <div class="aviso" id="aviso">
+    O jogador só precisa de olhar, apontar e disparar. Tudo o resto é daqui.
+  </div>
+</div>
+
+<div class="cartao">
+  <div class="medidores">
+    <div class="medidor"><div class="n" id="mPontos">—</div><div class="r">pontos</div></div>
+    <div class="medidor"><div class="n" id="mTempo">—</div><div class="r">tempo</div></div>
+    <div class="medidor"><div class="n" id="mSeguidas">—</div><div class="r">seguidas</div></div>
+    <div class="medidor"><div class="n" id="mBolas">—</div><div class="r">bolas</div></div>
+  </div>
+  <div class="barra"><i id="barraTempo"></i></div>
+</div>
+
+<div class="cartao">
+  <label>Melhores resultados</label>
+  <table id="tabela"><tr><td colspan="2" style="color:var(--suave)">ainda sem registos</td></tr></table>
+</div>
+
+<script>
+// O endereço é o desta própria página, por isso não há nada a configurar.
+const WS = location.origin.replace(/^http/, 'ws') + '/ws';
+
+const $ = id => document.getElementById(id);
+let sock = null, ligado = false, duracaoTotal = 0;
+
+function ligar() {
+  sock = new WebSocket(WS + '?role=viewer');
+
+  sock.onopen = () => {
+    ligado = true;
+    $('ligacao').textContent = 'ligado — à espera do visor';
+  };
+
+  sock.onmessage = (e) => {
+    let d; try { d = JSON.parse(e.data); } catch (_) { return; }
+
+    if (d.ev === 'hello') {
+      marcarJogador(!!d.player);
+      if (d.player && d.player.name) $('nome').value = d.player.name;
+      if (d.scores) tabela(d.scores);
+    }
+    else if (d.ev === 'player') marcarJogador(d.online);
+    else if (d.ev === 'scores') tabela(d.scores);
+    else if (d.ev === 'state') estado(d);
+  };
+
+  sock.onclose = () => {
+    ligado = false;
+    $('ligacao').textContent = 'ligação perdida — a tentar de novo';
+    $('ponto').classList.remove('on');
+    setTimeout(ligar, 2500);
+  };
+  sock.onerror = () => {};
+}
+
+function marcarJogador(online) {
+  $('ponto').classList.toggle('on', online);
+  $('ligacao').textContent = online ? 'visor ligado' : 'ligado — à espera do visor';
+}
+
+function estado(d) {
+  $('mPontos').textContent = d.score ?? '—';
+  $('mTempo').textContent = d.t != null ? d.t + 's' : '—';
+  $('mSeguidas').textContent = d.streak ?? '—';
+  $('mBolas').textContent = d.ammo ?? '—';
+  if (d.t != null) {
+    duracaoTotal = Math.max(duracaoTotal, d.t);
+    $('barraTempo').style.width = (duracaoTotal ? d.t / duracaoTotal * 100 : 0) + '%';
+  }
+  const modos = { cal: 'a calibrar', play: 'a jogar', end: 'terminado' };
+  if (d.m) $('ligacao').textContent = 'visor ligado — ' + (modos[d.m] || d.m);
+}
+
+function tabela(lista) {
+  const t = $('tabela');
+  if (!lista || !lista.length) {
+    t.innerHTML = '<tr><td colspan="2" style="color:var(--suave)">ainda sem registos</td></tr>';
+    return;
+  }
+  t.innerHTML = lista.slice(0, 8)
+    .map(s => `<tr><td>${escapar(s.name)}</td><td>${s.score}</td></tr>`).join('');
+}
+
+const escapar = s => String(s).replace(/[<>&"]/g, c =>
+  ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]);
+
+function enviar(cmd, value) {
+  if (!sock || sock.readyState !== 1) return;
+  sock.send(JSON.stringify({ cmd, value }));
+}
+
+$('arrancar').onclick = () => {
+  const n = $('nome').value.trim();
+  if (n) enviar('name', n);
+  duracaoTotal = 0;
+  enviar('start');
+  piscar($('arrancar'));
+};
+$('parar').onclick = () => { enviar('stop'); piscar($('parar')); };
+$('recal').onclick = () => { enviar('recal'); piscar($('recal')); };
+$('nome').addEventListener('change', () => {
+  const n = $('nome').value.trim();
+  if (n) enviar('name', n);
+});
+
+function piscar(b) {
+  const t = b.textContent;
+  b.textContent = '✓';
+  setTimeout(() => { b.textContent = t; }, 550);
+}
+
+// O plano gratuito do Render adormece ao fim de 15 minutos sem tráfego, e
+// demora quase um minuto a acordar. Enquanto este painel estiver aberto,
+// mantém o serviço desperto.
+setInterval(() => { fetch('/ping').catch(() => {}); }, 10 * 60 * 1000);
+
+ligar();
+</script>
+</body>
+</html>

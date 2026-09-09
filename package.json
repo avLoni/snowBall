@@ -1,0 +1,10 @@
+{
+  "name": "snowball-relay",
+  "version": "1.0.0",
+  "description": "Relay and control panel for the snowball WebXR game",
+  "main": "server.js",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "ws": "^8.18.0" }
+}
