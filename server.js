@@ -135,6 +135,7 @@ const servidor = createServer(async (req, res) => {
   // operator's tablet and a player's headset never land on the same page.
   let ficheiro = rota === '/' ? '/hub.html'
                : rota === '/control' ? '/control.html'
+               : rota === '/watch' ? '/watch.html'
                : rota;
   if (!/\.[a-z]+$/.test(ficheiro)) ficheiro += '.html';
   try {
