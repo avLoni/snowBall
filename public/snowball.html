@@ -596,6 +596,14 @@ function relayState(now) {
       ammo: game.ammo, run: game.running ? 1 : 0,
       cy: r2(PIVOT.y),
       ch: superState.charging ? superState.ammoUsed : 0,
+      // Where the player is and which way they are looking, so the
+      // spectator view can put the camera over their shoulder instead of
+      // guessing; and the gingerbread, who is half the show.
+      pl: [r2(camPos.x), r2(camPos.y), r2(camPos.z), r2(playfieldYaw)],
+      elf: elfGroup.visible
+        ? [r2(elfGroup.position.x), r2(elfGroup.position.y), r2(elfGroup.position.z),
+           r2(elfGroup.rotation.y), elf.state]
+        : null,
       balls, tg
     }));
   } catch (e) {}

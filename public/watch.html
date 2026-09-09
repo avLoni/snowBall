@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bolas de Neve — vista</title>
+<style>
+  :root { --texto:#eaf0ff; --suave:#8fa0c0; --caixa:rgba(12,18,32,.72); }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:#0b1020; overflow:hidden;
+    font:15px/1.4 ui-rounded,-apple-system,"Segoe UI",system-ui,sans-serif; color:var(--texto); }
+  canvas { display:block; }
+
+  #hud { position:fixed; top:0; left:0; right:0; padding:16px 20px; z-index:5;
+         display:flex; align-items:center; gap:22px; pointer-events:none;
+         background:linear-gradient(rgba(6,10,20,.75), transparent); }
+  #hud .nome { font-size:19px; font-weight:700; }
+  #hud .val  { font-size:30px; font-weight:800; line-height:1; }
+  #hud .rot  { font-size:11px; color:var(--suave); text-transform:uppercase; letter-spacing:.6px; }
+  #hud .bloco { text-align:center; }
+  #hud .dir { margin-left:auto; text-align:right; }
+
+  #estado { position:fixed; bottom:18px; left:20px; z-index:5;
+            background:var(--caixa); padding:9px 14px; border-radius:9px;
+            font-size:13px; color:var(--suave); backdrop-filter:blur(8px); }
+  #estado b { color:var(--texto); font-weight:600; }
+
+  #vistas { position:fixed; bottom:18px; right:20px; z-index:6; display:flex; gap:8px; }
+  #vistas button { padding:9px 15px; border:1px solid rgba(255,255,255,.16);
+    background:var(--caixa); color:var(--texto); border-radius:9px; cursor:pointer;
+    font:inherit; font-size:13px; backdrop-filter:blur(8px); }
+  #vistas button.on { background:#3d6bd6; border-color:#5b8cff; }
+
+  #espera { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+            flex-direction:column; gap:10px; z-index:8; background:#0b1020; text-align:center; padding:24px; }
+  #espera h1 { font-size:25px; margin:0; font-weight:750; }
+  #espera p { color:var(--suave); margin:0; max-width:38ch; line-height:1.55; }
+  .oculto { display:none !important; }
+</style>
+</head>
+<body>
+
+<div id="hud" class="oculto">
+  <div class="bloco"><div class="val" id="hPontos">0</div><div class="rot">pontos</div></div>
+  <div class="bloco"><div class="val" id="hTempo">—</div><div class="rot">tempo</div></div>
+  <div class="bloco"><div class="val" id="hSeguidas">0</div><div class="rot">seguidas</div></div>
+  <div class="dir"><div class="nome" id="hNome">—</div><div class="rot" id="hModo">a aguardar</div></div>
+</div>
+
+<div id="estado" class="oculto">ligação <b id="eLigacao">—</b> · <b id="eFps">0</b> act/s</div>
+
+<div id="vistas" class="oculto">
+  <button data-v="ombro" class="on">Sobre o ombro</button>
+  <button data-v="lado">De lado</button>
+  <button data-v="alto">De cima</button>
+</div>
+
+<div id="espera">
+  <h1>À espera do jogador</h1>
+  <p id="espMsg">Assim que alguém entrar no jogo, aparece aqui o que está a ver.</p>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ═══════════════════════════════════════════════════════════
+//  SPECTATOR VIEW
+//  Rebuilds the arena on this screen from the state the headset streams
+//  fifteen times a second. Nothing here simulates anything: positions
+//  arrive over the wire and are interpolated between updates, which is
+//  what keeps it smooth at 60 fps off a 15 Hz feed.
+// ═══════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+
+const cena = new THREE.Scene();
+cena.background = new THREE.Color(0x112248);
+cena.fog = new THREE.Fog(0x304790, 24, 80);
+
+const camara = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.05, 400);
+const render = new THREE.WebGLRenderer({ antialias: true });
+render.setPixelRatio(Math.min(devicePixelRatio, 2));
+render.setSize(innerWidth, innerHeight);
+document.body.appendChild(render.domElement);
+addEventListener('resize', () => {
+  camara.aspect = innerWidth / innerHeight;
+  camara.updateProjectionMatrix();
+  render.setSize(innerWidth, innerHeight);
+});
+
+cena.add(new THREE.HemisphereLight(0x9fc0ff, 0x2a3550, 1.6));
+const lua = new THREE.DirectionalLight(0xdce8ff, 1.9);
+lua.position.set(-8, 14, -6);
+cena.add(lua);
+
+// ── ground and sky, same assets the game uses ──
+{
+  const g = new THREE.PlaneGeometry(160, 160, 40, 40).rotateX(-Math.PI / 2);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), z = p.getZ(i), d = Math.hypot(x, z);
+    if (d > 5) p.setY(i, Math.sin(x * 0.18) * Math.cos(z * 0.15) * 0.5 * Math.min((d - 5) / 8, 1));
+  }
+  g.computeVertexNormals();
+  cena.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0xdfe9ff, roughness: 0.92 })));
+}
+
+new THREE.TextureLoader().load('sky.jpg', (tex) => {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(
+    new THREE.SphereGeometry(160, 48, 32),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false }));
+  m.renderOrder = -1000;
+  m.rotation.y = -0.6;
+  cena.add(m);
+}, undefined, () => {});
+
+function materialCena(raiz) {
+  raiz.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    o.material = o.material.clone();
+    o.material.metalness = 0;
+    o.material.roughness = 0.9;
+    if (o.material.map) {
+      o.material.map.colorSpace = THREE.SRGBColorSpace;
+      o.material.emissive = new THREE.Color(0xffffff);
+      o.material.emissiveMap = o.material.map;
+      o.material.emissiveIntensity = 0.22;
+    }
+    o.material.needsUpdate = true;
+  });
+}
+
+// ── scenery ring, laid out the same way the game does it ──
+const CENARIO = [
+  ['pine.glb', 14, 3.8, 13, 30], ['tree_a.glb', 12, 4.2, 12, 29],
+  ['tree_b.glb', 10, 3.4, 14, 30], ['tree_c.glb', 10, 3.9, 13, 28],
+  ['rocks.glb', 8, 0.9, 8, 20],   ['log.glb', 3, 0.7, 9, 16],
+  ['fence.glb', 6, 1.1, 7, 12],   ['lantern.glb', 3, 2.3, 8, 13],
+  ['cabin.glb', 1, 4.0, 16, 16]
+];
+for (const [ficheiro, n, alt, r0, r1] of CENARIO) {
+  new GLTFLoader().load(ficheiro, (gltf) => {
+    let fonte = null;
+    gltf.scene.updateWorldMatrix(true, true);
+    gltf.scene.traverse(o => { if (o.isMesh && !fonte) fonte = o; });
+    if (!fonte) return;
+    const geo = fonte.geometry.clone();
+    geo.applyMatrix4(fonte.matrixWorld);
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox;
+    geo.translate(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
+    const base = alt / Math.max(bb.max.y - bb.min.y, 0.01);
+    const env = new THREE.Object3D(); env.add(fonte);
+    materialCena(env);
+    const grupo = new THREE.InstancedMesh(geo, fonte.material, n);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion();
+    const pos = new THREE.Vector3(), esc = new THREE.Vector3();
+    const eixo = new THREE.Vector3(0, 1, 0);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + Math.random() * 0.3;
+      const r = r0 + Math.random() * (r1 - r0);
+      const k = base * (n > 1 ? 0.8 + Math.random() * 0.5 : 1);
+      pos.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+      q.setFromAxisAngle(eixo, Math.random() * Math.PI * 2);
+      esc.set(k, k, k);
+      grupo.setMatrixAt(i, m4.compose(pos, q, esc));
+    }
+    grupo.instanceMatrix.needsUpdate = true;
+    grupo.frustumCulled = false;
+    cena.add(grupo);
+  }, undefined, () => {});
+}
+
+// ── the cannon: a stand-in, aimed by the relayed yaw and pitch ──
+const canhao = new THREE.Group();
+const giro = new THREE.Group();
+const inclina = new THREE.Group();
+{
+  const escuro = new THREE.MeshStandardMaterial({ color: 0x2c3a55, roughness: 0.7 });
+  const poste = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 1.0, 12), escuro);
+  poste.position.y = -0.5; canhao.add(poste);
+  const cano = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.13, 0.75, 14),
+    new THREE.MeshStandardMaterial({ color: 0x4e6796, roughness: 0.5,
+      emissive: 0x1d3050, emissiveIntensity: 0.5 }));
+  cano.rotation.x = Math.PI / 2;
+  cano.position.z = -0.36;
+  inclina.add(cano);
+  giro.add(inclina);
+  canhao.add(giro);
+}
+cena.add(canhao);
+
+// A marker for where the player is standing and looking.
+const jogador = new THREE.Mesh(
+  new THREE.RingGeometry(0.34, 0.42, 32).rotateX(-Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0x5b8cff, transparent: true, opacity: 0.55 }));
+jogador.position.y = 0.02;
+cena.add(jogador);
+
+// ── snowmen and snowballs, pooled ──
+const modelosNeve = [];
+for (const f of ['snowman1.glb', 'snowman2.glb', 'snowman3.glb', 'snowman4.glb']) {
+  new GLTFLoader().load(f, (gltf) => {
+    materialCena(gltf.scene);
+    const caixa = new THREE.Box3().setFromObject(gltf.scene);
+    modelosNeve.push({ raiz: gltf.scene, alt: Math.max(caixa.max.y - caixa.min.y, 0.01),
+                       centro: caixa.getCenter(new THREE.Vector3()), minY: caixa.min.y });
+  }, undefined, () => {});
+}
+
+const RAIOS = [0.78, 0.52, 0.36];
+const alvos = [];
+function alvoEm(i) {
+  if (alvos[i]) return alvos[i];
+  const g = new THREE.Group();
+  const esfera = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 12),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }));
+  g.add(esfera);
+  g.userData.esfera = esfera;
+  cena.add(g);
+  alvos[i] = g;
+  return g;
+}
+function vestirAlvo(g, escala) {
+  if (!modelosNeve.length || g.userData.vestido) return;
+  const v = modelosNeve[(Math.random() * modelosNeve.length) | 0];
+  const c = v.raiz.clone();
+  const s = escala * 2.35 / v.alt;
+  c.scale.setScalar(s);
+  c.position.set(-v.centro.x * s, -v.minY * s, -v.centro.z * s);
+  g.remove(g.userData.esfera);
+  g.add(c);
+  g.userData.vestido = true;
+}
+
+const bolas = [];
+const geoBola = new THREE.SphereGeometry(1, 14, 10);
+const matBola = new THREE.MeshStandardMaterial({ color: 0xf4f8ff, roughness: 0.6,
+  emissive: 0x8fb6ff, emissiveIntensity: 0.25 });
+
+// ── the gingerbread ──
+let ginger = null, gingerMixer = null, gingerClips = {}, gingerClipAtual = null;
+new GLTFLoader().load('gingerbread.glb', (gltf) => {
+  const m = gltf.scene;
+  materialCena(m);
+  const caixa = new THREE.Box3().setFromObject(m);
+  const s = 1.15 / Math.max(caixa.max.y - caixa.min.y, 0.01);
+  m.scale.setScalar(s);
+  ginger = new THREE.Group();
+  ginger.add(m);
+  ginger.visible = false;
+  cena.add(ginger);
+  if (gltf.animations.length) {
+    gingerMixer = new THREE.AnimationMixer(m);
+    for (const c of gltf.animations) {
+      const a = gingerMixer.clipAction(c);
+      const nome = c.name.replace(/^gb_/, '');
+      a.loop = nome === 'idle' ? THREE.LoopRepeat : THREE.LoopOnce;
+      if (nome !== 'idle') a.clampWhenFinished = true;
+      gingerClips[nome] = a;
+    }
+  }
+}, undefined, () => {});
+
+function tocarGinger(nome) {
+  const a = gingerClips[nome] || gingerClips.idle;
+  if (!a || a === gingerClipAtual) return;
+  try {
+    a.reset().setEffectiveWeight(1).play();
+    if (gingerClipAtual && gingerClipAtual.isRunning()) gingerClipAtual.crossFadeTo(a, 0.1, false);
+    else if (gingerClipAtual) gingerClipAtual.stop();
+    gingerClipAtual = a;
+  } catch (e) {}
+}
+
+// ═══════════════════════════════════════════════════════════
+//  THE FEED
+//  Two snapshots are kept at all times and the render blends between
+//  them, so a 15 Hz stream draws as smooth motion.
+// ═══════════════════════════════════════════════════════════
+let anterior = null, actual = null, tRecebido = 0, contagem = 0, actsPorSeg = 0;
+let sock = null;
+
+function ligar() {
+  const url = location.origin.replace(/^http/, 'ws') + '/ws?role=viewer';
+  sock = new WebSocket(url);
+  sock.onopen = () => { $('eLigacao').textContent = 'ligada'; };
+  sock.onmessage = (ev) => {
+    let d; try { d = JSON.parse(ev.data); } catch (_) { return; }
+    if (d.ev === 'hello') { if (d.player) $('hNome').textContent = d.player.name || 'jogador'; }
+    else if (d.ev === 'player') {
+      if (!d.online) { $('espera').classList.remove('oculto'); $('espMsg').textContent = 'O jogador saiu.'; }
+    }
+    else if (d.ev === 'state') {
+      anterior = actual; actual = d; tRecebido = performance.now(); contagem++;
+      mostrarJogo();
+      aplicarPainel(d);
+    }
+  };
+  sock.onclose = () => { $('eLigacao').textContent = 'perdida — a tentar'; setTimeout(ligar, 2500); };
+  sock.onerror = () => {};
+}
+
+function mostrarJogo() {
+  $('espera').classList.add('oculto');
+  for (const id of ['hud', 'estado', 'vistas']) $(id).classList.remove('oculto');
+}
+
+const MODOS = { cal: 'a calibrar', play: 'a jogar', end: 'terminado' };
+function aplicarPainel(d) {
+  $('hPontos').textContent = d.score ?? 0;
+  $('hTempo').textContent = d.t != null ? d.t + 's' : '—';
+  $('hSeguidas').textContent = d.streak ?? 0;
+  $('hModo').textContent = MODOS[d.m] || d.m || '';
+}
+setInterval(() => { actsPorSeg = contagem; contagem = 0; $('eFps').textContent = actsPorSeg; }, 1000);
+
+// ── view modes ──
+let vista = 'ombro';
+for (const b of document.querySelectorAll('#vistas button')) {
+  b.onclick = () => {
+    vista = b.dataset.v;
+    for (const o of document.querySelectorAll('#vistas button')) o.classList.toggle('on', o === b);
+  };
+}
+
+const alvoCam = new THREE.Vector3();
+function moverCamara(px, py, pz, pyaw, dt) {
+  const frente = new THREE.Vector3(-Math.sin(pyaw), 0, -Math.cos(pyaw));
+  if (vista === 'ombro') {
+    alvoCam.set(px - frente.x * 3.4, py + 1.5, pz - frente.z * 3.4);
+    camara.position.lerp(alvoCam, 1 - Math.pow(0.002, dt));
+    camara.lookAt(px + frente.x * 8, py - 0.2, pz + frente.z * 8);
+  } else if (vista === 'lado') {
+    const lado = new THREE.Vector3(-frente.z, 0, frente.x);
+    alvoCam.set(px + lado.x * 7 + frente.x * 2, py + 2.2, pz + lado.z * 7 + frente.z * 2);
+    camara.position.lerp(alvoCam, 1 - Math.pow(0.004, dt));
+    camara.lookAt(px + frente.x * 5, 1.2, pz + frente.z * 5);
+  } else {
+    alvoCam.set(px - frente.x * 2, 15, pz - frente.z * 2);
+    camara.position.lerp(alvoCam, 1 - Math.pow(0.01, dt));
+    camara.lookAt(px + frente.x * 7, 0.5, pz + frente.z * 7);
+  }
+}
+
+const misturar = (a, b, k) => a + (b - a) * k;
+
+let ultimo = performance.now();
+function desenhar() {
+  requestAnimationFrame(desenhar);
+  const agora = performance.now();
+  const dt = Math.min((agora - ultimo) / 1000, 0.05);
+  ultimo = agora;
+  if (gingerMixer) gingerMixer.update(dt);
+
+  if (actual) {
+    // How far between the last two snapshots we are, capped so a dropped
+    // packet freezes rather than extrapolating into nonsense.
+    const k = Math.min((agora - tRecebido) / (1000 / 15), 1);
+    const a = anterior || actual;
+
+    const pl = actual.pl || [0, 1.6, 0, 0];
+    const plA = (a.pl || pl);
+    const px = misturar(plA[0], pl[0], k), py = misturar(plA[1], pl[1], k), pz = misturar(plA[2], pl[2], k);
+    jogador.position.set(px, 0.02, pz);
+    moverCamara(px, py, pz, pl[3] || 0, dt);
+
+    canhao.position.set(px, actual.cy ?? 1.0, pz);
+    canhao.rotation.y = pl[3] || 0;
+    giro.rotation.y = misturar(a.yaw ?? 0, actual.yaw ?? 0, k);
+    inclina.rotation.x = -misturar(a.pitch ?? 0, actual.pitch ?? 0, k);
+
+    // targets
+    const tg = actual.tg || [];
+    for (let i = 0; i < tg.length; i++) {
+      const [x, y, z, tier, morto] = tg[i];
+      const g = alvoEm(i);
+      const escala = RAIOS[tier] || 0.5;
+      vestirAlvo(g, escala);
+      if (!g.userData.vestido) g.userData.esfera.scale.setScalar(escala);
+      const ta = (a.tg && a.tg[i]) || tg[i];
+      g.position.set(misturar(ta[0], x, k), misturar(ta[1], y, k), misturar(ta[2], z, k));
+      g.visible = !morto;
+      g.rotation.y += dt * 0.3;
+    }
+    for (let i = tg.length; i < alvos.length; i++) if (alvos[i]) alvos[i].visible = false;
+
+    // snowballs
+    const bs = actual.balls || [];
+    for (let i = 0; i < bs.length; i++) {
+      if (!bolas[i]) { bolas[i] = new THREE.Mesh(geoBola, matBola); cena.add(bolas[i]); }
+      const [x, y, z, r] = bs[i];
+      bolas[i].position.set(x, y, z);
+      bolas[i].scale.setScalar(r);
+      bolas[i].visible = true;
+    }
+    for (let i = bs.length; i < bolas.length; i++) if (bolas[i]) bolas[i].visible = false;
+
+    // gingerbread
+    if (ginger) {
+      if (actual.elf) {
+        const [x, y, z, ry, estado] = actual.elf;
+        const ea = a.elf || actual.elf;
+        ginger.position.set(misturar(ea[0], x, k), misturar(ea[1], y, k), misturar(ea[2], z, k));
+        ginger.rotation.y = ry;
+        ginger.visible = true;
+        const mapa = { emerge: 'emerge', wait: 'idle', windup: 'windup',
+                       follow: 'follow', taunt: 'idle', retreat: 'retreat', hit: 'hit' };
+        tocarGinger(mapa[estado] || 'idle');
+      } else ginger.visible = false;
+    }
+  }
+
+  render.render(cena, camara);
+}
+
+ligar();
+desenhar();
+</script>
+</body>
+</html>
