@@ -397,6 +397,32 @@ const camQuat = new THREE.Quaternion();
 const camInv = new THREE.Quaternion();
 const tmp = new THREE.Vector3();
 
+// The head, which the first recordings threw away. Hand position was logged
+// relative to the head on purpose — to strip out head movement, which was
+// contamination at the time. But a hard throw swings the whole body, and
+// the headset measures its own motion better than it measures anything
+// else. That makes the head a candidate signal, and the old logs cannot
+// answer it because the information was subtracted out of them.
+const cabecaAnt = new THREE.Vector3();
+const anguloAnt = new THREE.Euler();
+let temCabecaAnt = false;
+const velCabeca = new THREE.Vector3();
+let velAngular = 0;
+const anguloCabeca = new THREE.Euler();
+
+function medirCabeca(dt) {
+  anguloCabeca.setFromQuaternion(camQuat, 'YXZ');
+  if (temCabecaAnt && dt > 0) {
+    velCabeca.copy(camPos).sub(cabecaAnt).divideScalar(dt);
+    const dpitch = anguloCabeca.x - anguloAnt.x;
+    const dyaw = ((anguloCabeca.y - anguloAnt.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    velAngular = Math.hypot(dpitch, dyaw) / dt;
+  }
+  cabecaAnt.copy(camPos);
+  anguloAnt.copy(anguloCabeca);
+  temCabecaAnt = true;
+}
+
 function registar(t, m, evento) {
   if (amostras.length >= MAX_AMOSTRAS) return;
   const r3 = v => Math.round(v * 1000) / 1000;
@@ -409,6 +435,9 @@ function registar(t, m, evento) {
     r3(m.vel.length()),
     r3(m.pos.x), r3(m.pos.y), r3(m.pos.z),        // world, to separate head motion
     m.juntasVistas | 0,                            // how much of the hand is seen
+    r3(camPos.x), r3(camPos.y), r3(camPos.z),      // head, in the room
+    r3(anguloCabeca.x), r3(anguloCabeca.y), r3(anguloCabeca.z),
+    r3(velCabeca.length()), r3(velAngular),
     m.estado,
     etiquetaActual(),
     evento || ''
@@ -417,7 +446,9 @@ function registar(t, m, evento) {
 
 const CABECALHO = ['t_ms','mao','seguida','rel_x','rel_y','rel_z',
                    'vel_x','vel_y','vel_z','vel_abs',
-                   'mundo_x','mundo_y','mundo_z','juntas','estado','tarefa','evento'];
+                   'mundo_x','mundo_y','mundo_z','juntas',
+                   'cab_x','cab_y','cab_z','cab_pitch','cab_yaw','cab_roll',
+                   'cab_vel','cab_vel_ang','estado','tarefa','evento'];
 
 function paraCSV() {
   const linhas = [CABECALHO.join(',')];
@@ -589,6 +620,7 @@ function frame() {
   const cam = render.xr.getCamera();
   cam.getWorldPosition(camPos);
   cam.getWorldQuaternion(camQuat);
+  medirCabeca(dt);
 
   for (const m of maos) {
     let evento = actualizarMao(m, t, dt);
