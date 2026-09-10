@@ -67,10 +67,14 @@
       <li><strong>Segue o quadro.</strong> Ele fica à tua frente e pede um movimento
         de cada vez, com uma contagem. Faz o que ele diz quando aparecer
         <strong>AGORA</strong> a verde — nem antes nem depois.</li>
+      <li><strong>Aparece uma bola à tua frente.</strong> Leva a mão até ela primeiro — o
+        quadro passa a dizer <strong>ATIRA</strong> quando a apanhares — e só depois lança.
+        É esse ponto de partida que nos falta: sem ele, o balanço já vai a meio quando o
+        visor vê a mão pela primeira vez.</li>
       <li>Usa sempre a <strong>mesma mão</strong>, e atira <strong>por cima do ombro</strong>:
         a mão tem de passar acima da cabeça. É esse o movimento em que o visor a perde,
         e é esse que precisamos de medir.</li>
-      <li>São treze pedidos, cerca de <strong>oitenta segundos</strong> ao todo.</li>
+      <li>São treze pedidos, cerca de <strong>noventa segundos</strong> ao todo.</li>
       <li><strong>Sai da sessão.</strong> A gravação é enviada para o servidor sozinha.</li>
       <li>No computador, abre <code id="endLogs">/logs</code> e descarrega o ficheiro.</li>
     </ol>
@@ -176,7 +180,7 @@ for (let i = 0; i < 2; i++) {
     vel: new THREE.Vector3(),
     posAnt: new THREE.Vector3(),
     posMundoAnt: new THREE.Vector3(),
-    congelado: 0,
+    congelado: 0, juntasVistas: 0,
     temAnt: false,
     estado: 'parada',
     tParado: 0,
@@ -196,6 +200,53 @@ const rasto = new THREE.Line(rastoGeo, new THREE.LineBasicMaterial({ color: 0x5c
 rasto.frustumCulled = false;
 cena.add(rasto);
 let rastoN = 0;
+
+// ── THE PICK-UP POINT ─────────────────────────────────────
+// The throws we recorded had an unknown origin: the hand rests at the side,
+// out of the cameras' reach, so the wind-up was already under way by the
+// time anything was measured. That is why exit velocity told us nothing —
+// it was a fragment of a movement whose beginning we never saw.
+//
+// Making the player fetch the ball fixes the start. And the place to put it
+// is not a guess: the recordings show the hand reappearing at about 40 cm
+// in front of the face every single time, which is proof that the runtime
+// tracks that volume reliably.
+const OFFSET_BOLA = new THREE.Vector3(0.10, -0.26, -0.42);   // head-relative
+const RAIO_AGARRAR = 0.13;
+
+const bola = new THREE.Mesh(
+  new THREE.SphereGeometry(0.055, 20, 14),
+  new THREE.MeshBasicMaterial({ color: 0xeef3ff }));
+bola.visible = false;
+cena.add(bola);
+const halo = new THREE.Mesh(
+  new THREE.SphereGeometry(RAIO_AGARRAR, 18, 12),
+  new THREE.MeshBasicMaterial({ color: 0x5ce39a, transparent: true, opacity: 0.16 }));
+halo.visible = false;
+cena.add(halo);
+
+let bolaPosta = false, bolaNaMao = false, tAgarrou = 0;
+const posBola = new THREE.Vector3();
+
+// Anchored once per attempt, in front of wherever the player is facing.
+// It must NOT follow the head afterwards: a target that drifts while you
+// wind up is not a fixed origin, which is the whole point of having one.
+function porBola() {
+  posBola.copy(OFFSET_BOLA).applyQuaternion(camQuat).add(camPos);
+  bola.position.copy(posBola);
+  halo.position.copy(posBola);
+  bolaPosta = true;
+}
+
+function verAgarrar(m, t) {
+  if (!bolaPosta || bolaNaMao || !m.activa) return '';
+  if (m.pos.distanceTo(posBola) < RAIO_AGARRAR) {
+    bolaNaMao = true; tAgarrou = t;
+    bola.visible = false; halo.visible = false;
+    return 'agarrou';
+  }
+  return '';
+}
 
 // ── the readout that floats in front of you ───────────────
 function fazerPainel(l, a, pxL, pxA) {
@@ -254,9 +305,15 @@ function desenharPainel() {
     ctx.font = 'bold 96px -apple-system, system-ui, sans-serif';
     ctx.fillText(String(Math.max(falta, 1)), pxL / 2, pxA / 2 + 84);
   } else if (faseGuiao === 'executar') {
-    ctx.fillStyle = '#5ce39a';
-    ctx.font = 'bold 76px -apple-system, system-ui, sans-serif';
-    ctx.fillText('AGORA', pxL / 2, pxA / 2 + 84);
+    // Two beats, and the panel says which one you are on. Without it the
+    // player cannot tell whether the lab has registered the grab, and a
+    // missed grab means a wasted attempt.
+    const p2 = GUIAO[passoGuiao];
+    const diz = !p2.bola ? 'AGORA'
+              : (bolaNaMao ? 'ATIRA' : 'AGARRA A BOLA');
+    ctx.fillStyle = (p2.bola && !bolaNaMao) ? '#ffb45c' : '#5ce39a';
+    ctx.font = 'bold 70px -apple-system, system-ui, sans-serif';
+    ctx.fillText(diz, pxL / 2, pxA / 2 + 84);
     const frac = Math.min((relogio - tFase) / EXECUTAR, 1);
     ctx.fillStyle = 'rgba(92,227,154,0.4)';
     ctx.fillRect(60, pxA - 44, (pxL - 120) * (1 - frac), 10);
@@ -283,35 +340,47 @@ function desenharPainel() {
 // session — it asks for one throw at a time, counts down, and stamps the
 // recording with which throw this is and how hard it was meant to be.
 // Every sample then belongs to a known attempt.
+// Every attempt now starts at the ball. The comparison that matters is
+// between this and the previous session: same throws, but with a known
+// origin instead of a hand appearing from nowhere.
 const GUIAO = [
-  { tipo: 'aquecer',  forca: '—',      diz: 'Deixa as mãos caídas e não mexas' },
-  { tipo: 'lance',    forca: 'suave',  diz: 'Atira com pouca força' },
-  { tipo: 'lance',    forca: 'suave',  diz: 'Outra vez, com pouca força' },
-  { tipo: 'lance',    forca: 'medio',  diz: 'Agora com força média' },
-  { tipo: 'lance',    forca: 'medio',  diz: 'Outra vez, força média' },
-  { tipo: 'lance',    forca: 'medio',  diz: 'Mais uma, força média' },
-  { tipo: 'lance',    forca: 'forte',  diz: 'Agora com tudo' },
-  { tipo: 'lance',    forca: 'forte',  diz: 'Outra vez, com tudo' },
-  { tipo: 'lance',    forca: 'forte',  diz: 'Mais uma, com tudo' },
-  { tipo: 'falso',    forca: '—',      diz: 'Recua a mão e NÃO atires' },
-  { tipo: 'falso',    forca: '—',      diz: 'Outra vez: recua e pára' },
-  { tipo: 'aceno',    forca: '—',      diz: 'Acena, como um adeus' },
-  { tipo: 'lance',    forca: 'medio',  diz: 'Último: força média' }
+  { tipo: 'aquecer', forca: '—',     bola: false, diz: 'Mãos caídas, sem mexer' },
+  { tipo: 'lance',   forca: 'suave', bola: true,  diz: 'Agarra a bola e atira devagar' },
+  { tipo: 'lance',   forca: 'suave', bola: true,  diz: 'Outra vez, devagar' },
+  { tipo: 'lance',   forca: 'medio', bola: true,  diz: 'Agarra e atira com força média' },
+  { tipo: 'lance',   forca: 'medio', bola: true,  diz: 'Outra vez, força média' },
+  { tipo: 'lance',   forca: 'medio', bola: true,  diz: 'Mais uma, força média' },
+  { tipo: 'lance',   forca: 'forte', bola: true,  diz: 'Agarra e atira com tudo' },
+  { tipo: 'lance',   forca: 'forte', bola: true,  diz: 'Outra vez, com tudo' },
+  { tipo: 'lance',   forca: 'forte', bola: true,  diz: 'Mais uma, com tudo' },
+  { tipo: 'falso',   forca: '—',     bola: true,  diz: 'Agarra, recua… e NÃO atires' },
+  { tipo: 'falso',   forca: '—',     bola: true,  diz: 'Outra vez: agarra, recua e pára' },
+  { tipo: 'aceno',   forca: '—',     bola: false, diz: 'Acena, como um adeus' },
+  { tipo: 'lance',   forca: 'forte', bola: true,  diz: 'Último: agarra e atira com tudo' }
 ];
-const PREPARAR = 2600, EXECUTAR = 2400, PAUSA = 900;
+const PREPARAR = 2200, EXECUTAR = 3400, PAUSA = 900;
 
 let passoGuiao = -1, faseGuiao = 'espera', tFase = 0;
 function etiquetaActual() {
   const p = GUIAO[passoGuiao];
   if (!p || faseGuiao !== 'executar') return '';
-  return `${passoGuiao}:${p.tipo}:${p.forca}`;
+  return `${passoGuiao}:${p.tipo}:${p.forca}:${bolaNaMao ? 'commao' : 'antes'}`;
 }
 
 function avancarGuiao(t) {
   if (passoGuiao < 0) { passoGuiao = 0; faseGuiao = 'preparar'; tFase = t; return; }
   const decorrido = t - tFase;
-  if (faseGuiao === 'preparar' && decorrido > PREPARAR) { faseGuiao = 'executar'; tFase = t; }
-  else if (faseGuiao === 'executar' && decorrido > EXECUTAR) { faseGuiao = 'pausa'; tFase = t; }
+  if (faseGuiao === 'preparar' && decorrido > PREPARAR) {
+    faseGuiao = 'executar'; tFase = t;
+    const p = GUIAO[passoGuiao];
+    bolaNaMao = false; bolaPosta = false;
+    if (p && p.bola) { porBola(); bola.visible = true; halo.visible = true; }
+    else { bola.visible = false; halo.visible = false; }
+  }
+  else if (faseGuiao === 'executar' && decorrido > EXECUTAR) {
+    faseGuiao = 'pausa'; tFase = t;
+    bola.visible = false; halo.visible = false; bolaPosta = false;
+  }
   else if (faseGuiao === 'pausa' && decorrido > PAUSA) {
     passoGuiao++;
     if (passoGuiao >= GUIAO.length) { faseGuiao = 'fim'; }
@@ -339,6 +408,7 @@ function registar(t, m, evento) {
     r3(m.vel.x), r3(m.vel.y), r3(m.vel.z),        // velocity, head-relative
     r3(m.vel.length()),
     r3(m.pos.x), r3(m.pos.y), r3(m.pos.z),        // world, to separate head motion
+    m.juntasVistas | 0,                            // how much of the hand is seen
     m.estado,
     etiquetaActual(),
     evento || ''
@@ -347,7 +417,7 @@ function registar(t, m, evento) {
 
 const CABECALHO = ['t_ms','mao','seguida','rel_x','rel_y','rel_z',
                    'vel_x','vel_y','vel_z','vel_abs',
-                   'mundo_x','mundo_y','mundo_z','estado','tarefa','evento'];
+                   'mundo_x','mundo_y','mundo_z','juntas','estado','tarefa','evento'];
 
 function paraCSV() {
   const linhas = [CABECALHO.join(',')];
@@ -427,7 +497,15 @@ function actualizarMao(m, t, dt) {
   const nomes = juntas ? Object.keys(juntas) : [];
   const pulso = juntas && juntas['wrist'];
 
-  if (!nomes.length || !pulso) {
+  // The real answer, straight from WebXR: three.js sets a joint invisible
+  // when the runtime returns no pose for it. The previous session leaned on
+  // a 'has it stopped moving' heuristic instead, which called a hand that
+  // was simply hanging still 'lost' 86% of the time. Stillness and absence
+  // are not the same thing, and only the runtime knows which is which.
+  const vistas = nomes.filter(n => juntas[n].visible !== false).length;
+  m.juntasVistas = vistas;
+
+  if (!nomes.length || !pulso || pulso.visible === false || vistas < 5) {
     m.activa = false;
     for (const s of m.esferas.values()) s.visible = false;
     return passo(m, t, dt);
@@ -443,9 +521,12 @@ function actualizarMao(m, t, dt) {
   // zero and a loss was never once detected. The first session came back
   // claiming the hand was tracked 100% of the time, which the frozen
   // samples in the same file flatly contradicted.
-  if (tmp.distanceToSquared(m.posMundoAnt) < 4e-8 && m.temAnt) {
+  // Kept only as a backstop for runtimes that keep reporting a pose they
+  // are no longer measuring: half a second of an EXACTLY identical wrist
+  // transform is not a human holding still, it is a replayed frame.
+  if (tmp.distanceToSquared(m.posMundoAnt) < 1e-12 && m.temAnt) {
     m.congelado += dt;
-    if (m.congelado > 0.12) {
+    if (m.congelado > 0.5) {
       m.activa = false;
       for (const s of m.esferas.values()) s.visible = false;
       return passo(m, t, dt);
@@ -510,7 +591,9 @@ function frame() {
   cam.getWorldQuaternion(camQuat);
 
   for (const m of maos) {
-    const evento = actualizarMao(m, t, dt);
+    let evento = actualizarMao(m, t, dt);
+    const pegou = verAgarrar(m, t);
+    if (pegou) evento = evento ? evento + '|' + pegou : pegou;
     registar(t, m, evento);
     if (m.idx === 0 && m.activa) empurrarRasto(m.pos);
   }
