@@ -55,20 +55,21 @@
 
   <div class="cartao">
     <h2>O que descobrimos, e como se usa</h2>
-    <p>O visor perde a mão quando ela passa atrás da cabeça e só a reencontra
-      quando o braço vem à frente. É esse intervalo — o <strong>tempo cego</strong> —
-      que diz a força: um lançamento com tudo roda o braço depressa e fica escondido
-      menos tempo. Medimos <strong>599 a 856&nbsp;ms</strong> nos fortes,
-      <strong>784 a 844</strong> nos médios e <strong>907 a 1153</strong> nos suaves.</p>
-    <p>A parte visível do balanço não serve para isto, e a primeira versão deste
-      protótipo enganou-se a confiar nela: o que parecia força era hesitação antes de
-      atirar. A aceleração acontece toda depois de a mão já ter desaparecido.</p>
-    <p>A tabela em baixo traz agora uma coluna para a <strong>cabeça</strong>. Um
-      lançamento com força puxa o tronco, e a cabeça vai atrás — e o visor mede o
-      próprio movimento melhor do que mede seja o que for. Está apenas a ser
-      registada, não usada: as gravações antigas não podem responder a isto porque
-      guardavam a mão relativa à cabeça, o que subtrai exatamente o movimento em
-      questão.</p>
+    <p>Quando a mão desaparece atrás da cabeça, isso diz-nos uma coisa com quase
+      total certeza: <strong>vem aí um lançamento</strong>. Mas não diz com que
+      força — porque entre desaparecer e atirar pode passar-se uma espera, à procura
+      do alvo certo, e essa espera não é esforço nenhum.</p>
+    <p>A força vem de a <strong>cabeça pender para o lado</strong>. Não de virar nem
+      de baixar — de <em>inclinar</em>, o queixo a cair na direção de um ombro. Um
+      lançamento a sério não é um braço: o ombro que atira desce, o tronco roda, e a
+      cabeça vai atrás. Um lançamento contido é quase só cotovelo, e a cabeça fica
+      direita.</p>
+    <p>Medimos <strong>2° e 4°</strong> nos suaves, <strong>3° a 8°</strong> nos médios
+      e <strong>9° a 19°</strong> nos fortes — ordenados na perfeição, sem uma única
+      troca. Um aceno deu 0,1°.</p>
+    <p>Virar e baixar a cabeça acontece sempre que se olha para um alvo, e por isso
+      carregam a pontaria tanto como o esforço. Inclinar não: olhar para um sítio não
+      te inclina a cabeça. E quem dispara é sempre a mão, nunca a cabeça.</p>
   </div>
 
   <div class="cartao">
@@ -93,7 +94,7 @@
   <div class="cartao">
     <h2>Lançamentos desta sessão</h2>
     <table id="tabela">
-      <tr><th>#</th><th>cego</th><th>extensão</th><th>vel</th><th>força</th><th>cabeça</th><th>alcance</th><th>resultado</th></tr>
+      <tr><th>#</th><th>inclinação</th><th>força</th><th>cego</th><th>extensão</th><th>alcance</th><th>resultado</th></tr>
     </table>
   </div>
 </div>
@@ -172,12 +173,26 @@ const AJUSTE = {
   extMinima: 0.42,        // and the arm is out, not fidgeting by the head
   esperaMax: 1400,        // after this, it was not a throw
 
-  // Force is the arm's average speed through the part nobody can see:
-  // how far the hand ended up from the head, over how long it was gone.
-  // Extension alone does not work — one hard throw came back no more
-  // extended than a medium one. Divided by the blind time it separates:
-  // soft 0.86–0.93, medium 1.00–1.12, hard 1.06–2.25 m/s.
-  velLenta: 0.88, velRapida: 1.30,
+  // ── WHERE THE FORCE COMES FROM ─────────────────────────
+  // The head tilting sideways. Not turning, not nodding — tilting, the
+  // chin dropping towards a shoulder.
+  //
+  // It works because a real throw is not an arm. The throwing shoulder
+  // drops, the trunk rotates, and the head goes over with it. A polite
+  // throw is mostly elbow and the head stays upright.
+  //
+  // And it is specific in a way the others were not. Turning and nodding
+  // happen every time you look at a target, so they carry the aim as much
+  // as the effort. Tilting does not: looking somewhere does not tip your
+  // head, and throwing hard does.
+  //
+  // Measured over one session, ordered perfectly with no overlap:
+  //   soft   2° and 4°        (0.037, 0.075 rad)
+  //   medium 3° to 8°         (0.061, 0.082, 0.133)
+  //   hard   9° to 19°        (0.151, 0.240, 0.273, 0.339)
+  // A wave scored 0.002 and the two fake throws 0.043 and 0.051 — a
+  // gesture that is not a throw does not tilt the head.
+  inclinaSuave: 0.03, inclinaForte: 0.26,
 
   // Recomputed WITH the launch height. The old numbers used the textbook
   // range formula, which assumes the ball starts and lands at the same
@@ -298,7 +313,8 @@ function desenharPainel() {
   const msg = estado === 'espera' ? 'leva a mão à bola'
             : estado === 'namao' ? 'atira por cima do ombro'
             : estado === 'balanco' ? 'recua…'
-            : estado === 'noAr' ? 'agora estica o braço' : '';
+            : estado === 'noAr' ? 'agora estica o braço'
+            : estado === 'aVoar' ? 'a bola vai a caminho' : '';
   ctx.fillStyle = estado === 'noAr' ? '#ffb45c'
                 : estado === 'namao' ? '#5ce39a' : '#7d879e';
   ctx.font = '34px -apple-system, system-ui, sans-serif';
@@ -314,9 +330,8 @@ function desenharPainel() {
     // During the blind stretch the meter really is draining, because the
     // force really is still being decided: the longer the hand stays away,
     // the gentler the throw turns out to be.
-    const f = estado === 'noAr'
-              ? forcaDe(0.55 / (Math.max(relogio - tPerdeu, 60) / 1000))
-            : estado === 'balanco' ? 1 : Math.max(forcaViva, 0);
+    // Live, and honest: it climbs as the body turns into the throw.
+    const f = forcaDe(inclinaCabeca);
     ctx.fillStyle = f > 0.66 ? '#5ce39a' : f > 0.33 ? '#ffb45c' : '#e2564f';
     ctx.beginPath(); ctx.roundRect(bx, by, Math.max(bl * f, bh), bh, 23); ctx.fill();
   }
@@ -324,7 +339,7 @@ function desenharPainel() {
   ctx.font = '24px ui-monospace, Menlo, monospace';
   ctx.fillStyle = '#4a5468';
   ctx.font = '24px ui-monospace, Menlo, monospace';
-  ctx.fillText(estado === 'noAr' ? 'for\u00e7a \u00b7 decidida' : 'for\u00e7a', bx, by + bh + 14);
+  ctx.fillText('for\u00e7a \u00b7 inclina a cabe\u00e7a', bx, by + bh + 14);
 
   tex.needsUpdate = true;
 }
@@ -352,6 +367,10 @@ const camPos = new THREE.Vector3(), camQuat = new THREE.Quaternion();
 const cabAnt = new THREE.Vector3();
 const angAnt = new THREE.Euler(), angCab = new THREE.Euler();
 let temCabAnt = false, picoCabeca = 0, picoAngular = 0;
+let inclinaCabeca = 0;
+
+const angAoAgarrar = new THREE.Euler();
+let balancoCabeca = 0;
 
 function medirCabeca(dt) {
   angCab.setFromQuaternion(camQuat, 'YXZ');
@@ -360,12 +379,20 @@ function medirCabeca(dt) {
     const dp = angCab.x - angAnt.x;
     const dy = ((angCab.y - angAnt.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
     const va = Math.hypot(dp, dy) / dt;
-    // Only while the throw is happening; the rest of the time the head is
-    // just a person looking around.
-    if (estado === 'balanco' || estado === 'noAr') {
+    if (estado === 'namao' || estado === 'balanco' || estado === 'noAr') {
       picoCabeca = Math.max(picoCabeca, v);
       picoAngular = Math.max(picoAngular, va);
     }
+  }
+  // Only the tilt, and only its size — a left-hander tips the other way,
+  // and that should read the same. A maximum rather than a running total,
+  // so holding still while choosing a target costs nothing.
+  if (estado === 'namao' || estado === 'balanco' || estado === 'noAr') {
+    const dr = ((angCab.z - angAoAgarrar.z + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    inclinaCabeca = Math.max(inclinaCabeca, Math.abs(dr));
+    const dp = angCab.x - angAoAgarrar.x;
+    const dy = ((angCab.y - angAoAgarrar.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+    balancoCabeca = Math.max(balancoCabeca, Math.sqrt(dp * dp + dy * dy + dr * dr));
   }
   cabAnt.copy(camPos); angAnt.copy(angCab); temCabAnt = true;
 }
@@ -387,8 +414,8 @@ function porBola() {
 
 let ultimaExt = 0, ultimoCego = 0;
 
-function forcaDe(velCega) {
-  const k = (velCega - AJUSTE.velLenta) / (AJUSTE.velRapida - AJUSTE.velLenta);
+function forcaDe(inclina) {
+  const k = (inclina - AJUSTE.inclinaSuave) / (AJUSTE.inclinaForte - AJUSTE.inclinaSuave);
   return THREE.MathUtils.clamp(k, 0, 1);
 }
 
@@ -425,7 +452,8 @@ function lancar(forca, desdeMao) {
   registo.push({ n: lancamentos, dur: Math.round(tPerdeu - tAgarrou),
                  cego: Math.round(ultimoCego), ext: ultimaExt,
                  velCega: ultimaExt / (ultimoCego / 1000),
-                 cabeca: picoCabeca, cabAng: picoAngular,
+                 cabeca: picoCabeca, cabAng: picoAngular, balanco: balancoCabeca,
+                 inclina: inclinaCabeca,
                  amp: posPerdeu.distanceTo(posAgarrou), forca, alcance, resultado: '—' });
   desenharTabela();
 }
@@ -463,6 +491,12 @@ function actualizarMao(m, t, dt) {
 }
 
 function passoDoArremesso(t) {
+  // A ball is in flight: hands are empty until it lands.
+  if (estado === 'aVoar') {
+    if (!voando.length) { porBola(); }
+    return;
+  }
+
   if (estado === 'espera') {
     // Arms only once both hands are well away from it. Until then the ball
     // is visible but inert, and the halo is off to show it is not ready.
@@ -476,7 +510,8 @@ function passoDoArremesso(t) {
       if (m.activa && m.pos.distanceTo(posBola) < AJUSTE.raioAgarrar) {
         estado = 'namao'; maoActiva = m;
         tAgarrou = t; posAgarrou.copy(m.pos);
-        picoCabeca = 0; picoAngular = 0;
+        picoCabeca = 0; picoAngular = 0; balancoCabeca = 0; inclinaCabeca = 0;
+        angAoAgarrar.setFromQuaternion(camQuat, 'YXZ');
         bola.visible = halo.visible = false;
         return;
       }
@@ -488,11 +523,14 @@ function passoDoArremesso(t) {
     const m = maoActiva;
     if (m && m.activa) {
       estado = 'balanco';
+      // Only while it is genuinely still in the hand. From the moment
+      // tracking drops, the ball is gone from the hand — and it does not
+      // come back until a new one is placed.
       bola.position.copy(m.pos);
       bola.visible = true;
       forcaViva = forcaDe(t - tAgarrou);
       // Gone too long with nothing happening: put the ball back.
-      if (t - tAgarrou > 2200) { estado = 'espera'; porBola(); }
+      if (t - tAgarrou > 2200) { porBola(); }
       return;
     }
     // Tracking just dropped: the arm is behind the head. Note the force
@@ -514,6 +552,10 @@ function passoDoArremesso(t) {
 
   // Blind window. Waiting for the arm to come through, which is what the
   // player calls throwing.
+  // Only the HAND can fire. The head decides how hard, never whether: a
+  // player looking around, nodding or leaning must not be able to throw a
+  // snowball by accident. Nothing below is reached until the hand is back
+  // in view and out in front.
   if (estado === 'noAr') {
     const m = maoActiva;
     if (m && m.activa && m.pos.distanceTo(posPerdeu) > AJUSTE.passoRegresso) {
@@ -521,11 +563,17 @@ function passoDoArremesso(t) {
       const ext = tmp.length();
       if (ext > AJUSTE.extMinima) {
         const cego = Math.max(t - tPerdeu, 60);
-        forcaGuardada = forcaDe(ext / (cego / 1000));
+        // The blind time no longer decides anything. It only ever told us
+        // that a throw was armed, which is exactly what the hand
+        // disappearing means — and that much it says with near certainty.
+        forcaGuardada = forcaDe(inclinaCabeca);
         ultimaExt = ext; ultimoCego = cego;
         lancar(forcaGuardada, m.pos);
-        estado = 'espera';
-        setTimeout(porBola, 900);
+        // No new ball while the last one is still in the air. A timer got
+        // this wrong both ways: too short and the hand was already holding
+        // the next one on the follow-through, too long and it felt slow.
+        // Waiting for the snowball to land is the honest condition.
+        estado = 'aVoar';
         return;
       }
       // The hand is back but tucked in near the head: they wound up and
@@ -574,12 +622,12 @@ function moverBolas(dt, t) {
 // ── the page's table ──────────────────────────────────────
 function desenharTabela() {
   const t = $('tabela');
-  t.innerHTML = '<tr><th>#</th><th>cego</th><th>extensão</th><th>vel</th><th>força</th>' +
-                '<th>cabeça</th><th>alcance</th><th>resultado</th></tr>' +
+  t.innerHTML = '<tr><th>#</th><th>inclinação</th><th>força</th><th>cego</th><th>extensão</th>' +
+                '<th>alcance</th><th>resultado</th></tr>' +
     registo.slice().reverse().map(r =>
-      `<tr><td>${r.n}</td><td>${r.cego} ms</td><td>${r.ext.toFixed(2)} m</td>` +
-      `<td>${r.velCega.toFixed(2)}</td><td>${(r.forca * 100).toFixed(0)}%</td>` +
-      `<td>${r.cabeca.toFixed(2)} m/s</td>` +
+      `<tr><td>${r.n}</td><td>${(r.inclina * 57.3).toFixed(1)}°</td>` +
+      `<td>${(r.forca * 100).toFixed(0)}%</td><td>${r.cego} ms</td>` +
+      `<td>${r.ext.toFixed(2)} m</td>` +
       `<td>${r.alcance.toFixed(1)} m</td><td>${r.resultado}</td></tr>`).join('');
 }
 
@@ -650,11 +698,12 @@ entrarBt.addEventListener('click', async () => {
 
 $('enviar').addEventListener('click', async () => {
   if (!registo.length) { estadoEl.textContent = 'Ainda não há lançamentos.'; return; }
-  const csv = ['n,balanco_ms,cego_ms,extensao_m,vel_cega,forca,cabeca_ms,cabeca_ang,alcance_m,resultado']
+  const csv = ['n,inclina_rad,inclina_graus,forca,balanco_rad,cego_ms,extensao_m,vel_cega,cabeca_ms,cabeca_ang,alcance_m,resultado']
     .concat(registo.map(r =>
-      `${r.n},${r.dur},${r.cego},${r.ext.toFixed(3)},${r.velCega.toFixed(3)},` +
-      `${r.forca.toFixed(3)},${r.cabeca.toFixed(3)},${r.cabAng.toFixed(3)},` +
-      `${r.alcance.toFixed(2)},"${r.resultado}"`)).join('\n');
+      `${r.n},${r.inclina.toFixed(4)},${(r.inclina*57.3).toFixed(1)},` +
+      `${r.forca.toFixed(3)},${r.balanco.toFixed(4)},${r.cego},` +
+      `${r.ext.toFixed(3)},${r.velCega.toFixed(3)},${r.cabeca.toFixed(3)},` +
+      `${r.cabAng.toFixed(3)},${r.alcance.toFixed(2)},"${r.resultado}"`)).join('\n');
   try {
     const r = await fetch(new URL('/callog?label=proto-arremesso', location.origin).href,
       { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: csv });
