@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Protótipo de Arremesso</title>
+<style>
+  :root {
+    --void:#070a12; --sup:#10151f; --linha:#1e2637;
+    --neve:#eef3ff; --dim:#7d879e; --fraco:#4a5468;
+    --feixe:#5b8cff; --brasa:#ffb45c; --bom:#5ce39a;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:0 22px 80px; background:var(--void); color:var(--neve);
+    font:16px/1.55 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  .wrap { max-width:720px; margin:0 auto; }
+  header { padding:56px 0 22px; }
+  .olho { font-family:var(--mono); font-size:12px; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--fraco); margin:0 0 14px; }
+  h1 { font-size:clamp(34px,9vw,52px); font-weight:800; letter-spacing:-.035em;
+    line-height:1; margin:0 0 16px; }
+  h1 em { font-style:normal; color:var(--feixe); }
+  p.lead { color:var(--dim); max-width:54ch; margin:0; }
+  .cartao { background:var(--sup); border:1px solid var(--linha); border-radius:16px;
+    padding:20px; margin:18px 0; }
+  .cartao h2 { font-size:18px; margin:0 0 10px; }
+  .cartao p { color:var(--dim); font-size:15px; margin:0 0 10px; }
+  ol { color:var(--dim); font-size:15px; padding-left:20px; margin:0; }
+  ol li { margin-bottom:7px; }
+  ol strong { color:var(--neve); }
+  button { font:inherit; font-weight:650; border:none; border-radius:11px;
+    padding:15px 22px; cursor:pointer; background:var(--feixe); color:#06101f; }
+  button:disabled { opacity:.4; cursor:default; }
+  button.sec { background:#26324a; color:var(--neve); font-size:15px; padding:12px 17px; }
+  .linhaBt { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  #estado { color:var(--dim); font-size:14px; margin-top:12px; min-height:20px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; font-family:var(--mono); }
+  th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.1em;
+    color:var(--fraco); padding-bottom:8px; }
+  td { padding:7px 10px 7px 0; border-top:1px solid var(--linha); color:var(--dim); }
+  td:first-child { color:var(--neve); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="olho">Vision Pro · WebXR · protótipo</p>
+    <h1>Arremesso<br><em>com a mão</em></h1>
+    <p class="lead">Atirar sem carregar em nada. Constrói-se sobre o que as gravações
+      mostraram: o visor perde a mão a meio do movimento, mas o tempo que ela leva a
+      chegar lá diz com que força vai.</p>
+  </header>
+
+  <div class="cartao">
+    <h2>O que descobrimos, e como se usa</h2>
+    <p>Do momento em que agarras a bola até o visor te perder de vista, a mão percorre
+      sempre a mesma distância — cerca de meio metro, ditada pelo corpo. O que muda é
+      quanto tempo demora. Nas gravações, os lançamentos com tudo levaram
+      <strong>509 a 630&nbsp;ms</strong>; os médios e suaves, <strong>744 a 823</strong>.
+      Sem uma única sobreposição.</p>
+    <p>Daí a regra: <strong>mais depressa, mais forte</strong>. O medidor à tua frente
+      desce enquanto recuas o braço, para veres isso a acontecer.</p>
+  </div>
+
+  <div class="cartao">
+    <h2>Como jogar</h2>
+    <ol>
+      <li>Aparece uma bola de neve à tua frente. <strong>Leva a mão até ela.</strong></li>
+      <li><strong>Atira por cima do ombro</strong>, com a mão a passar acima da cabeça.</li>
+      <li>A bola sai na direção em que estás a <strong>olhar</strong>, com a força do
+        teu gesto. Acerta nos bonecos.</li>
+      <li>Aparece outra bola. Repete.</li>
+    </ol>
+  </div>
+
+  <div class="cartao">
+    <div class="linhaBt">
+      <button id="entrar" disabled>A verificar o dispositivo…</button>
+      <button id="enviar" class="sec" type="button">Enviar registo</button>
+    </div>
+    <div id="estado"></div>
+  </div>
+
+  <div class="cartao">
+    <h2>Lançamentos desta sessão</h2>
+    <table id="tabela">
+      <tr><th>#</th><th>balanço</th><th>amplitude</th><th>força</th><th>alcance</th><th>resultado</th></tr>
+    </table>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ═══════════════════════════════════════════════════════════
+//  HAND THROW — PROTOTYPE
+//
+//  Built on one finding: the headset stops seeing the hand about half a
+//  metre into the wind-up, every time, at nearly the same place. It never
+//  witnesses the release. So the release is not detected — it is inferred.
+//
+//  The measurement that survives is the time from picking the ball up to
+//  the moment tracking drops. Amplitude barely varies (the arm is the arm);
+//  duration varies a lot, and it varies with effort. That is the signal.
+// ═══════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+const entrarBt = $('entrar'), estadoEl = $('estado');
+
+let xrOk = false;
+if (!navigator.xr) {
+  estadoEl.textContent = 'Sem WebXR. Abre esta página no Safari do Vision Pro.';
+} else {
+  navigator.xr.isSessionSupported('immersive-vr').then(ok => {
+    xrOk = ok; entrarBt.disabled = !ok;
+    entrarBt.textContent = ok ? 'Entrar' : 'Sessões imersivas indisponíveis';
+  });
+}
+
+// ── numbers taken from the recordings ─────────────────────
+const AJUSTE = {
+  // Where the ball waits. Chosen because this is exactly where the hand
+  // reappeared after every throw in the logs, which is proof the runtime
+  // tracks that volume well.
+  bolaOffset: new THREE.Vector3(0.10, -0.26, -0.42),
+  raioAgarrar: 0.15,
+
+  // Wind-up duration → force. 900 ms is a lazy lob, 450 ms is everything
+  // you have. The measured range was 509–823 ms, so the ends are padded a
+  // little to leave room for people who throw harder or softer than the
+  // one person in the data.
+  durLenta: 900, durRapida: 450,
+
+  ampMinima: 0.22,        // below this it was a twitch, not a throw
+  quadrosParado: 4,       // identical wrist transforms that mean 'gone'
+
+  // The release the headset never sees. In the recordings the hand came
+  // back to the front about 250 ms after vanishing, which is where the
+  // ball would have left it.
+  atrasoLargada: 240,
+
+  velFraca: 7.0, velForte: 13.5,   // m/s
+  loft: 0.42                        // radians above the line of sight
+};
+
+const cena = new THREE.Scene();
+cena.background = new THREE.Color(0x0b1226);
+cena.fog = new THREE.Fog(0x24305c, 14, 55);
+const camara = new THREE.PerspectiveCamera(70, 1, 0.02, 90);
+const render = new THREE.WebGLRenderer({ antialias: true });
+render.setPixelRatio(window.devicePixelRatio);
+render.xr.enabled = true;
+document.body.appendChild(render.domElement);
+
+cena.add(new THREE.HemisphereLight(0xbfd4ff, 0x2a3550, 2.2));
+const sol = new THREE.DirectionalLight(0xffffff, 1.4);
+sol.position.set(-6, 12, -4); cena.add(sol);
+
+// ── the ground ────────────────────────────────────────────
+{
+  const g = new THREE.CircleGeometry(60, 48).rotateX(-Math.PI / 2);
+  cena.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0xdfe9ff })));
+  const grelha = new THREE.GridHelper(40, 40, 0x9fb4dd, 0xc3d2ee);
+  grelha.position.y = 0.01;
+  grelha.material.opacity = 0.35; grelha.material.transparent = true;
+  cena.add(grelha);
+}
+
+// ── targets ───────────────────────────────────────────────
+const alvos = [];
+{
+  const mat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+  const distancias = [5, 7.5, 10, 13];
+  distancias.forEach((d, i) => {
+    const g = new THREE.Group();
+    const baixo = new THREE.Mesh(new THREE.SphereGeometry(0.42, 18, 12), mat);
+    const meio = new THREE.Mesh(new THREE.SphereGeometry(0.30, 18, 12), mat);
+    const topo = new THREE.Mesh(new THREE.SphereGeometry(0.22, 18, 12), mat);
+    baixo.position.y = 0.42; meio.position.y = 0.95; topo.position.y = 1.38;
+    g.add(baixo, meio, topo);
+    const a = (i - (distancias.length - 1) / 2) * 0.28;
+    g.position.set(Math.sin(a) * d, 0, -Math.cos(a) * d);
+    cena.add(g);
+    alvos.push({ grupo: g, raio: 0.55, vivo: true, dist: d, respawn: 0 });
+  });
+}
+
+// ── the ball, and the hand ────────────────────────────────
+const bola = new THREE.Mesh(new THREE.SphereGeometry(0.06, 20, 14),
+  new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x8fb6ff, emissiveIntensity: 0.3 }));
+bola.visible = false; cena.add(bola);
+
+const halo = new THREE.Mesh(new THREE.SphereGeometry(AJUSTE.raioAgarrar, 18, 12),
+  new THREE.MeshBasicMaterial({ color: 0x5ce39a, transparent: true, opacity: 0.15 }));
+halo.visible = false; cena.add(halo);
+
+const geoJunta = new THREE.SphereGeometry(0.009, 8, 6);
+const matJunta = new THREE.MeshBasicMaterial({ color: 0x8fb2ff });
+const maos = [];
+for (let i = 0; i < 2; i++) {
+  const mao = render.xr.getHand(i);
+  cena.add(mao);
+  maos.push({ mao, idx: i, esferas: new Map(), activa: false,
+    pos: new THREE.Vector3(), posAnt: new THREE.Vector3(),
+    parado: 0, temAnt: false });
+}
+
+// ── flying snowballs ──────────────────────────────────────
+const voando = [];
+const geoVoo = new THREE.SphereGeometry(0.07, 14, 10);
+const matVoo = new THREE.MeshLambertMaterial({ color: 0xffffff,
+  emissive: 0x9fd0ff, emissiveIntensity: 0.35 });
+
+const anel = new THREE.Mesh(new THREE.RingGeometry(0.30, 0.40, 30).rotateX(-Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.8,
+    side: THREE.DoubleSide }));
+anel.visible = false; cena.add(anel);
+
+// ── the readout ───────────────────────────────────────────
+function fazerPainel(l, a, pxL, pxA) {
+  const cv = document.createElement('canvas');
+  cv.width = pxL; cv.height = pxA;
+  const ctx = cv.getContext('2d');
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const malha = new THREE.Mesh(new THREE.PlaneGeometry(l, a),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+  cena.add(malha);
+  return { ctx, tex, malha, pxL, pxA };
+}
+const painel = fazerPainel(1.3, 0.5, 1040, 400);
+let painelPosto = false;
+
+let pontos = 0, acertos = 0, lancamentos = 0;
+let forcaViva = 0;      // what the meter is showing right now
+
+function desenharPainel() {
+  const { ctx, tex, pxL, pxA } = painel;
+  ctx.clearRect(0, 0, pxL, pxA);
+  ctx.fillStyle = 'rgba(10,16,28,0.9)';
+  ctx.beginPath(); ctx.roundRect(0, 0, pxL, pxA, 24); ctx.fill();
+  ctx.strokeStyle = '#2a3a5c'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.roundRect(4, 4, pxL - 8, pxA - 8, 21); ctx.stroke();
+
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+  ctx.fillStyle = '#eef3ff';
+  ctx.font = 'bold 72px -apple-system, system-ui, sans-serif';
+  ctx.fillText(String(pontos), 32, 26);
+  ctx.fillStyle = '#4a5468';
+  ctx.font = '26px ui-monospace, Menlo, monospace';
+  ctx.fillText(`${acertos} de ${lancamentos}`, 34, 112);
+
+  const msg = estado === 'espera' ? 'leva a mão à bola'
+            : estado === 'namao' ? 'atira por cima do ombro'
+            : estado === 'balanco' ? '…' : '';
+  ctx.fillStyle = estado === 'namao' ? '#5ce39a' : '#7d879e';
+  ctx.font = '34px -apple-system, system-ui, sans-serif';
+  ctx.fillText(msg, 32, 162);
+
+  // The meter falls as the wind-up runs on, because that is what the model
+  // says: a slower wind-up is a weaker throw. Watching it drain teaches
+  // the mechanic faster than any instruction.
+  const bx = 32, by = 240, bl = pxL - 64, bh = 46;
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.beginPath(); ctx.roundRect(bx, by, bl, bh, 23); ctx.fill();
+  if (estado === 'balanco' || estado === 'namao') {
+    const f = Math.max(forcaViva, 0);
+    ctx.fillStyle = f > 0.66 ? '#5ce39a' : f > 0.33 ? '#ffb45c' : '#e2564f';
+    ctx.beginPath(); ctx.roundRect(bx, by, Math.max(bl * f, bh), bh, 23); ctx.fill();
+  }
+  ctx.fillStyle = '#4a5468';
+  ctx.font = '24px ui-monospace, Menlo, monospace';
+  ctx.fillText('força', bx, by + bh + 14);
+
+  tex.needsUpdate = true;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  THE THROW
+// ═══════════════════════════════════════════════════════════
+let estado = 'espera';        // espera → namao → balanco → (largada) → espera
+let tAgarrou = 0, posAgarrou = new THREE.Vector3(), maoActiva = null;
+let tPerdeu = 0, posPerdeu = new THREE.Vector3(), largarEm = 0, forcaGuardada = 0;
+const posBola = new THREE.Vector3();
+const registo = [];
+
+const camPos = new THREE.Vector3(), camQuat = new THREE.Quaternion();
+const frente = new THREE.Vector3(), tmp = new THREE.Vector3();
+
+function porBola() {
+  posBola.copy(AJUSTE.bolaOffset).applyQuaternion(camQuat).add(camPos);
+  bola.position.copy(posBola);
+  halo.position.copy(posBola);
+  bola.visible = halo.visible = true;
+  estado = 'espera';
+}
+
+function forcaDe(duracao) {
+  const k = (AJUSTE.durLenta - duracao) / (AJUSTE.durLenta - AJUSTE.durRapida);
+  return THREE.MathUtils.clamp(k, 0, 1);
+}
+
+function lancar(forca) {
+  // Direction comes from the head, not from the hand. The hand's last
+  // known heading is stale by definition — it was measured before the
+  // fastest part of the movement — while the head is rock steady and the
+  // player is already looking where they want the ball to go.
+  camara.getWorldDirection(frente);
+  frente.normalize();
+  const lado = tmp.set(0, 1, 0).cross(frente).normalize();
+  const dir = frente.clone().applyAxisAngle(lado, -AJUSTE.loft).normalize();
+
+  const vel = AJUSTE.velFraca + (AJUSTE.velForte - AJUSTE.velFraca) * forca;
+  const m = new THREE.Mesh(geoVoo, matVoo);
+  m.position.copy(camPos).addScaledVector(frente, 0.35);
+  m.position.y -= 0.12;
+  cena.add(m);
+  voando.push({ m, v: dir.multiplyScalar(vel), nasceu: performance.now(), atingiu: false });
+  lancamentos++;
+
+  const alcance = vel * vel * Math.sin(2 * AJUSTE.loft) / 9.81;
+  registo.push({ n: lancamentos, dur: Math.round(tPerdeu - tAgarrou),
+                 amp: posPerdeu.distanceTo(posAgarrou), forca, alcance, resultado: '—' });
+  desenharTabela();
+}
+
+function actualizarMao(m, t, dt) {
+  const juntas = m.mao.joints;
+  const pulso = juntas && juntas['wrist'];
+  if (!pulso) { m.activa = false; return; }
+  pulso.getWorldPosition(tmp);
+
+  // The one reliable way to know the hand is gone. visionOS keeps
+  // reporting all twenty-five joints as visible while replaying the last
+  // pose it saw — the recordings showed that in 100% of the lost samples —
+  // so the API cannot be asked. An exactly identical transform can.
+  if (m.temAnt && tmp.distanceToSquared(m.posAnt) < 1e-12) {
+    m.parado++;
+    if (m.parado >= AJUSTE.quadrosParado) m.activa = false;
+  } else {
+    m.parado = 0;
+    m.activa = true;
+  }
+  m.pos.copy(tmp);
+  m.posAnt.copy(tmp);
+  m.temAnt = true;
+
+  for (const nome in juntas) {
+    const j = juntas[nome];
+    let s = m.esferas.get(nome);
+    if (!s) { s = new THREE.Mesh(geoJunta, matJunta); cena.add(s); m.esferas.set(nome, s); }
+    if (!m.activa) { s.visible = false; continue; }
+    j.getWorldPosition(tmp);
+    s.position.copy(tmp);
+    s.visible = true;
+  }
+}
+
+function passoDoArremesso(t) {
+  if (estado === 'espera') {
+    for (const m of maos) {
+      if (m.activa && m.pos.distanceTo(posBola) < AJUSTE.raioAgarrar) {
+        estado = 'namao'; maoActiva = m;
+        tAgarrou = t; posAgarrou.copy(m.pos);
+        bola.visible = halo.visible = false;
+        return;
+      }
+    }
+    return;
+  }
+
+  if (estado === 'namao' || estado === 'balanco') {
+    const m = maoActiva;
+    if (m && m.activa) {
+      estado = 'balanco';
+      bola.position.copy(m.pos);
+      bola.visible = true;
+      forcaViva = forcaDe(t - tAgarrou);
+      // Gone too long with nothing happening: put the ball back.
+      if (t - tAgarrou > 2200) { estado = 'espera'; porBola(); }
+      return;
+    }
+    // Tracking just dropped. This is the moment everything hangs on.
+    if (m && !m.activa) {
+      tPerdeu = t; posPerdeu.copy(m.pos);
+      const amp = posPerdeu.distanceTo(posAgarrou);
+      if (amp < AJUSTE.ampMinima) {   // a twitch, not a throw
+        estado = 'espera'; porBola(); return;
+      }
+      forcaGuardada = forcaDe(tPerdeu - tAgarrou);
+      largarEm = t + AJUSTE.atrasoLargada;
+      estado = 'aLargar';
+      bola.visible = false;
+    }
+    return;
+  }
+
+  if (estado === 'aLargar' && t >= largarEm) {
+    lancar(forcaGuardada);
+    estado = 'espera';
+    setTimeout(porBola, 450);
+  }
+}
+
+// ── flight and hits ───────────────────────────────────────
+function moverBolas(dt, t) {
+  for (let i = voando.length - 1; i >= 0; i--) {
+    const b = voando[i];
+    b.v.y -= 9.81 * dt;
+    b.m.position.addScaledVector(b.v, dt);
+    for (const a of alvos) {
+      if (!a.vivo) continue;
+      tmp.copy(a.grupo.position); tmp.y = 0.9;
+      if (b.m.position.distanceTo(tmp) < a.raio) {
+        a.vivo = false; a.grupo.visible = false; a.respawn = t + 2000;
+        acertos++;
+        pontos += Math.round(a.dist * 10);
+        const r = registo[registo.length - 1];
+        if (r && r.resultado === '—') { r.resultado = `acertou (${a.dist} m)`; desenharTabela(); }
+        cena.remove(b.m); voando.splice(i, 1);
+        break;
+      }
+    }
+    if (b.m.position.y < 0.05) {
+      anel.position.set(b.m.position.x, 0.03, b.m.position.z);
+      anel.visible = true;
+      const r = registo[registo.length - 1];
+      if (r && r.resultado === '—') {
+        r.resultado = `caiu a ${b.m.position.length().toFixed(1)} m`;
+        desenharTabela();
+      }
+      cena.remove(b.m); voando.splice(i, 1);
+    } else if (t - b.nasceu > 6000) { cena.remove(b.m); voando.splice(i, 1); }
+  }
+  for (const a of alvos) {
+    if (!a.vivo && t > a.respawn) { a.vivo = true; a.grupo.visible = true; }
+  }
+}
+
+// ── the page's table ──────────────────────────────────────
+function desenharTabela() {
+  const t = $('tabela');
+  t.innerHTML = '<tr><th>#</th><th>balanço</th><th>amplitude</th><th>força</th>' +
+                '<th>alcance</th><th>resultado</th></tr>' +
+    registo.slice().reverse().map(r =>
+      `<tr><td>${r.n}</td><td>${r.dur} ms</td><td>${r.amp.toFixed(2)} m</td>` +
+      `<td>${(r.forca * 100).toFixed(0)}%</td><td>${r.alcance.toFixed(1)} m</td>` +
+      `<td>${r.resultado}</td></tr>`).join('');
+}
+
+// ── frame ─────────────────────────────────────────────────
+let ultimo = 0, t0 = 0, contaPainel = 0;
+
+function frame() {
+  const agora = performance.now();
+  const dt = Math.min((agora - ultimo) / 1000, 0.05);
+  ultimo = agora;
+  const t = agora - t0;
+
+  cena.updateMatrixWorld(true);
+  const cam = render.xr.getCamera();
+  cam.getWorldPosition(camPos);
+  cam.getWorldQuaternion(camQuat);
+  camara.position.copy(camPos);
+  camara.quaternion.copy(camQuat);
+
+  for (const m of maos) actualizarMao(m, t, dt);
+  passoDoArremesso(t);
+  moverBolas(dt, t);
+
+  if (!painelPosto && camPos.lengthSq() > 0) {
+    frente.set(0, 0, -1).applyQuaternion(camQuat); frente.y = 0; frente.normalize();
+    painel.malha.position.set(camPos.x + frente.x * 2.2 - frente.z * 1.5, 1.5,
+                              camPos.z + frente.z * 2.2 + frente.x * 1.5);
+    painelPosto = true;
+  }
+  painel.malha.lookAt(camPos.x, camPos.y, camPos.z);
+
+  contaPainel += dt;
+  if (contaPainel > 0.08) { contaPainel = 0; desenharPainel(); }
+
+  render.render(cena, camara);
+}
+
+// ── session ───────────────────────────────────────────────
+entrarBt.addEventListener('click', async () => {
+  if (!xrOk) return;
+  entrarBt.disabled = true;
+  try {
+    const sessao = await navigator.xr.requestSession('immersive-vr',
+      { optionalFeatures: ['local-floor', 'hand-tracking'] });
+    render.xr.setReferenceSpaceType('local-floor');
+    await render.xr.setSession(sessao);
+    t0 = performance.now(); ultimo = t0;
+    pontos = acertos = lancamentos = 0; registo.length = 0;
+    painelPosto = false; estado = 'espera';
+    render.setAnimationLoop(frame);
+    setTimeout(porBola, 900);
+    estadoEl.textContent = 'A correr.';
+    sessao.addEventListener('end', () => {
+      render.setAnimationLoop(null);
+      entrarBt.disabled = false;
+      entrarBt.textContent = 'Entrar de novo';
+      estadoEl.textContent = `${acertos} acertos em ${lancamentos} lançamentos · ${pontos} pontos.`;
+      desenharTabela();
+    });
+  } catch (e) {
+    entrarBt.disabled = false;
+    estadoEl.textContent = 'Não foi possível entrar: ' + e.message;
+  }
+});
+
+$('enviar').addEventListener('click', async () => {
+  if (!registo.length) { estadoEl.textContent = 'Ainda não há lançamentos.'; return; }
+  const csv = ['n,balanco_ms,amplitude_m,forca,alcance_m,resultado']
+    .concat(registo.map(r => `${r.n},${r.dur},${r.amp.toFixed(3)},${r.forca.toFixed(3)},` +
+                             `${r.alcance.toFixed(2)},"${r.resultado}"`)).join('\n');
+  try {
+    const r = await fetch(new URL('/callog?label=proto-arremesso', location.origin).href,
+      { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: csv });
+    estadoEl.textContent = r.ok ? `Enviado. Vai buscá-lo a ${location.origin}/logs`
+                                : 'O servidor recusou: ' + r.status;
+  } catch (e) { estadoEl.textContent = 'Sem servidor aqui.'; }
+});
+</script>
+</body>
+</html>

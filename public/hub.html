@@ -286,7 +286,7 @@
 //  Add a new experiment here and it appears on the page.
 //  Bump BUILD whenever you deploy, so Safari fetches fresh files.
 // ═══════════════════════════════════════════════════════════
-const BUILD = 6;
+const BUILD = 7;
 
 const EXPERIENCES = [
   {
@@ -304,6 +304,13 @@ const EXPERIENCES = [
     glyph: 'phone',
     mono: true,
     noXR: true          // the one entry that works without WebXR
+  },
+  {
+    file: 'throw-proto.html',
+    title: 'Throw Prototype',
+    line: 'Throwing with your hand, no button. The headset loses the hand halfway through the wind-up and never sees the release — so the release is inferred from how long the wind-up took. Faster means harder.',
+    chips: ['immersive', 'hand tracking', 'scored'],
+    glyph: 'hand'
   },
   {
     file: 'throw-lab.html',
