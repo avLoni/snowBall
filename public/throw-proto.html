@@ -86,7 +86,7 @@
   <div class="cartao">
     <h2>Lançamentos desta sessão</h2>
     <table id="tabela">
-      <tr><th>#</th><th>balanço</th><th>amplitude</th><th>força</th><th>alcance</th><th>resultado</th></tr>
+      <tr><th>#</th><th>balanço</th><th>cego</th><th>amplitude</th><th>força</th><th>alcance</th><th>resultado</th></tr>
     </table>
   </div>
 </div>
@@ -142,10 +142,14 @@ const AJUSTE = {
   ampMinima: 0.22,        // below this it was a twitch, not a throw
   quadrosParado: 4,       // identical wrist transforms that mean 'gone'
 
-  // The release the headset never sees. In the recordings the hand came
-  // back to the front about 250 ms after vanishing, which is where the
-  // ball would have left it.
-  atrasoLargada: 240,
+  // The release is not a delay after the hand vanishes — that instant is
+  // the arm still travelling BACK. It is the moment the arm comes forward,
+  // and the recordings say exactly where that shows up: the hand reappears
+  // 35 to 46 cm in FRONT of the face, between 234 and 656 ms later. A wind
+  // -up with no throw reappears where it left, and takes about three
+  // seconds. The two cases do not overlap at all.
+  zLargada: -0.20,        // head-relative depth that counts as 'arm extended'
+  esperaMax: 1400,        // after this, it was not a throw
 
   velFraca: 7.0, velForte: 13.5,   // m/s
   loft: 0.42                        // radians above the line of sight
@@ -260,8 +264,10 @@ function desenharPainel() {
 
   const msg = estado === 'espera' ? 'leva a mão à bola'
             : estado === 'namao' ? 'atira por cima do ombro'
-            : estado === 'balanco' ? '…' : '';
-  ctx.fillStyle = estado === 'namao' ? '#5ce39a' : '#7d879e';
+            : estado === 'balanco' ? 'recua…'
+            : estado === 'noAr' ? 'agora estica o braço' : '';
+  ctx.fillStyle = estado === 'noAr' ? '#ffb45c'
+                : estado === 'namao' ? '#5ce39a' : '#7d879e';
   ctx.font = '34px -apple-system, system-ui, sans-serif';
   ctx.fillText(msg, 32, 162);
 
@@ -271,14 +277,19 @@ function desenharPainel() {
   const bx = 32, by = 240, bl = pxL - 64, bh = 46;
   ctx.fillStyle = 'rgba(255,255,255,0.08)';
   ctx.beginPath(); ctx.roundRect(bx, by, bl, bh, 23); ctx.fill();
-  if (estado === 'balanco' || estado === 'namao') {
-    const f = Math.max(forcaViva, 0);
+  if (estado === 'balanco' || estado === 'namao' || estado === 'noAr') {
+    // Frozen once the hand is gone: the force was settled at that instant
+    // and nothing after it can change the number. A meter that kept
+    // draining would be lying about a decision already made.
+    const f = estado === 'noAr' ? forcaGuardada : Math.max(forcaViva, 0);
     ctx.fillStyle = f > 0.66 ? '#5ce39a' : f > 0.33 ? '#ffb45c' : '#e2564f';
     ctx.beginPath(); ctx.roundRect(bx, by, Math.max(bl * f, bh), bh, 23); ctx.fill();
   }
   ctx.fillStyle = '#4a5468';
   ctx.font = '24px ui-monospace, Menlo, monospace';
-  ctx.fillText('força', bx, by + bh + 14);
+  ctx.fillStyle = '#4a5468';
+  ctx.font = '24px ui-monospace, Menlo, monospace';
+  ctx.fillText(estado === 'noAr' ? 'for\u00e7a \u00b7 decidida' : 'for\u00e7a', bx, by + bh + 14);
 
   tex.needsUpdate = true;
 }
@@ -308,7 +319,9 @@ function forcaDe(duracao) {
   return THREE.MathUtils.clamp(k, 0, 1);
 }
 
-function lancar(forca) {
+const camInv = new THREE.Quaternion();
+
+function lancar(forca, desdeMao) {
   // Direction comes from the head, not from the hand. The hand's last
   // known heading is stale by definition — it was measured before the
   // fastest part of the movement — while the head is rock steady and the
@@ -320,14 +333,16 @@ function lancar(forca) {
 
   const vel = AJUSTE.velFraca + (AJUSTE.velForte - AJUSTE.velFraca) * forca;
   const m = new THREE.Mesh(geoVoo, matVoo);
-  m.position.copy(camPos).addScaledVector(frente, 0.35);
-  m.position.y -= 0.12;
+  // From the hand that just came through, when we have it.
+  if (desdeMao) m.position.copy(desdeMao);
+  else { m.position.copy(camPos).addScaledVector(frente, 0.35); m.position.y -= 0.12; }
   cena.add(m);
   voando.push({ m, v: dir.multiplyScalar(vel), nasceu: performance.now(), atingiu: false });
   lancamentos++;
 
   const alcance = vel * vel * Math.sin(2 * AJUSTE.loft) / 9.81;
   registo.push({ n: lancamentos, dur: Math.round(tPerdeu - tAgarrou),
+                 cego: Math.round(performance.now() - t0 - tPerdeu),
                  amp: posPerdeu.distanceTo(posAgarrou), forca, alcance, resultado: '—' });
   desenharTabela();
 }
@@ -388,7 +403,9 @@ function passoDoArremesso(t) {
       if (t - tAgarrou > 2200) { estado = 'espera'; porBola(); }
       return;
     }
-    // Tracking just dropped. This is the moment everything hangs on.
+    // Tracking just dropped: the arm is behind the head. Note the force
+    // now — this is the last real measurement there will be — but do not
+    // throw yet.
     if (m && !m.activa) {
       tPerdeu = t; posPerdeu.copy(m.pos);
       const amp = posPerdeu.distanceTo(posAgarrou);
@@ -396,17 +413,29 @@ function passoDoArremesso(t) {
         estado = 'espera'; porBola(); return;
       }
       forcaGuardada = forcaDe(tPerdeu - tAgarrou);
-      largarEm = t + AJUSTE.atrasoLargada;
-      estado = 'aLargar';
+      estado = 'noAr';
       bola.visible = false;
     }
     return;
   }
 
-  if (estado === 'aLargar' && t >= largarEm) {
-    lancar(forcaGuardada);
-    estado = 'espera';
-    setTimeout(porBola, 450);
+  // Blind window. Waiting for the arm to come through, which is what the
+  // player calls throwing.
+  if (estado === 'noAr') {
+    const m = maoActiva;
+    if (m && m.activa) {
+      tmp.copy(m.pos).sub(camPos).applyQuaternion(camInv);
+      if (tmp.z < AJUSTE.zLargada) {
+        lancar(forcaGuardada, m.pos);
+        estado = 'espera';
+        setTimeout(porBola, 420);
+        return;
+      }
+      // Back where it started: they wound up and stopped. No throw.
+      if (t - tPerdeu > 260) { estado = 'espera'; porBola(); }
+      return;
+    }
+    if (t - tPerdeu > AJUSTE.esperaMax) { estado = 'espera'; porBola(); }
   }
 }
 
@@ -448,10 +477,10 @@ function moverBolas(dt, t) {
 // ── the page's table ──────────────────────────────────────
 function desenharTabela() {
   const t = $('tabela');
-  t.innerHTML = '<tr><th>#</th><th>balanço</th><th>amplitude</th><th>força</th>' +
+  t.innerHTML = '<tr><th>#</th><th>balanço</th><th>cego</th><th>amplitude</th><th>força</th>' +
                 '<th>alcance</th><th>resultado</th></tr>' +
     registo.slice().reverse().map(r =>
-      `<tr><td>${r.n}</td><td>${r.dur} ms</td><td>${r.amp.toFixed(2)} m</td>` +
+      `<tr><td>${r.n}</td><td>${r.dur} ms</td><td>${r.cego ?? '—'} ms</td><td>${r.amp.toFixed(2)} m</td>` +
       `<td>${(r.forca * 100).toFixed(0)}%</td><td>${r.alcance.toFixed(1)} m</td>` +
       `<td>${r.resultado}</td></tr>`).join('');
 }
@@ -469,6 +498,7 @@ function frame() {
   const cam = render.xr.getCamera();
   cam.getWorldPosition(camPos);
   cam.getWorldQuaternion(camQuat);
+  camInv.copy(camQuat).invert();
   camara.position.copy(camPos);
   camara.quaternion.copy(camQuat);
 
@@ -520,8 +550,8 @@ entrarBt.addEventListener('click', async () => {
 
 $('enviar').addEventListener('click', async () => {
   if (!registo.length) { estadoEl.textContent = 'Ainda não há lançamentos.'; return; }
-  const csv = ['n,balanco_ms,amplitude_m,forca,alcance_m,resultado']
-    .concat(registo.map(r => `${r.n},${r.dur},${r.amp.toFixed(3)},${r.forca.toFixed(3)},` +
+  const csv = ['n,balanco_ms,cego_ms,amplitude_m,forca,alcance_m,resultado']
+    .concat(registo.map(r => `${r.n},${r.dur},${r.cego ?? ''},${r.amp.toFixed(3)},${r.forca.toFixed(3)},` +
                              `${r.alcance.toFixed(2)},"${r.resultado}"`)).join('\n');
   try {
     const r = await fetch(new URL('/callog?label=proto-arremesso', location.origin).href,
