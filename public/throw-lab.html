@@ -55,21 +55,22 @@
   <header>
     <p class="olho">Vision Pro · WebXR · instrumentação</p>
     <h1>Laboratório de<br><em>Arremesso</em></h1>
-    <p class="lead">Não é um jogo. Grava tudo o que as mãos fazem — incluindo o que
-      acontece quando o visor as perde de vista — para percebermos se um arremesso
-      pode ser reconstruído a partir do balanço.</p>
+    <p class="lead">Não é um jogo. Conduz uma série de movimentos pedidos um a um e
+      grava tudo — incluindo o que acontece quando o visor perde a mão de vista —
+      para percebermos se um arremesso pode ser reconstruído a partir do balanço.</p>
   </header>
 
   <div class="cartao">
     <h2>Como correr a sessão</h2>
     <ol>
       <li>Põe os óculos e entra.</li>
-      <li>Faz <strong>dez arremessos por cima do ombro</strong>, como se atirasses uma bola
-        de neve a sério: recua a mão, e lança.</li>
-      <li>Varia a força: uns <strong>fracos</strong>, uns <strong>médios</strong>, uns
-        <strong>com tudo</strong>. É a variação que revela o padrão.</li>
-      <li>Faz também <strong>três movimentos falsos</strong> — recuar a mão e não atirar.
-        Precisamos de saber distinguir.</li>
+      <li><strong>Segue o quadro.</strong> Ele fica à tua frente e pede um movimento
+        de cada vez, com uma contagem. Faz o que ele diz quando aparecer
+        <strong>AGORA</strong> a verde — nem antes nem depois.</li>
+      <li>Usa sempre a <strong>mesma mão</strong>, e atira <strong>por cima do ombro</strong>:
+        a mão tem de passar acima da cabeça. É esse o movimento em que o visor a perde,
+        e é esse que precisamos de medir.</li>
+      <li>São treze pedidos, cerca de <strong>oitenta segundos</strong> ao todo.</li>
       <li><strong>Sai da sessão.</strong> A gravação é enviada para o servidor sozinha.</li>
       <li>No computador, abre <code id="endLogs">/logs</code> e descarrega o ficheiro.</li>
     </ol>
@@ -174,6 +175,8 @@ for (let i = 0; i < 2; i++) {
     rel: new THREE.Vector3(),        // wrist, head-relative
     vel: new THREE.Vector3(),
     posAnt: new THREE.Vector3(),
+    posMundoAnt: new THREE.Vector3(),
+    congelado: 0,
     temAnt: false,
     estado: 'parada',
     tParado: 0,
@@ -206,46 +209,64 @@ function fazerPainel(l, a, pxL, pxA) {
   cena.add(malha);
   return { ctx, tex, malha, pxL, pxA };
 }
-const painel = fazerPainel(1.1, 0.62, 1100, 620);
+const painel = fazerPainel(1.5, 0.85, 1200, 680);
 
 function desenharPainel() {
   const { ctx, tex, pxL, pxA } = painel;
   ctx.clearRect(0, 0, pxL, pxA);
-  ctx.fillStyle = 'rgba(10,16,28,0.9)';
+  ctx.fillStyle = 'rgba(10,16,28,0.93)';
   ctx.beginPath(); ctx.roundRect(0, 0, pxL, pxA, 26); ctx.fill();
-  ctx.strokeStyle = '#2a3a5c'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.roundRect(4, 4, pxL - 8, pxA - 8, 23); ctx.stroke();
 
-  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-  ctx.fillStyle = '#7d879e';
-  ctx.font = '26px ui-monospace, Menlo, monospace';
-  ctx.fillText('LABORATÓRIO DE ARREMESSO', 34, 30);
+  const p = GUIAO[passoGuiao];
+  const cor = faseGuiao === 'executar' ? '#5ce39a'
+            : faseGuiao === 'preparar' ? '#ffb45c' : '#2a3a5c';
+  ctx.strokeStyle = cor; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.roundRect(5, 5, pxL - 10, pxA - 10, 22); ctx.stroke();
 
-  ctx.font = 'bold 62px -apple-system, system-ui, sans-serif';
-  ctx.fillStyle = '#eef3ff';
-  ctx.fillText(`${lances} lances`, 34, 70);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
 
-  ctx.font = '30px ui-monospace, Menlo, monospace';
-  let y = 168;
-  for (const m of maos) {
-    const cor = m.estado === 'recuo' ? '#ffb45c'
-              : m.estado === 'perdida' ? '#e2564f'
-              : m.estado === 'lancada' ? '#5ce39a' : '#4a5468';
-    ctx.fillStyle = cor;
-    const v = m.vel.length().toFixed(2);
-    ctx.fillText(`mão ${m.idx}  ${m.estado.padEnd(9)} ${m.activa ? '' : '(sem sinal)'}`, 34, y);
-    y += 40;
-    ctx.fillStyle = '#4a5468';
-    ctx.fillText(`   vel ${v} m/s   recuo ${(m.recuoDist * 100).toFixed(0)} cm`, 34, y);
-    y += 52;
+  if (faseGuiao === 'fim') {
+    ctx.fillStyle = '#5ce39a';
+    ctx.font = 'bold 84px -apple-system, system-ui, sans-serif';
+    ctx.fillText('Terminado', pxL / 2, pxA / 2 - 40);
+    ctx.fillStyle = '#7d879e';
+    ctx.font = '40px -apple-system, system-ui, sans-serif';
+    ctx.fillText('Sai da sessao para guardar', pxL / 2, pxA / 2 + 50);
+    tex.needsUpdate = true;
+    return;
   }
 
-  ctx.fillStyle = '#7d879e';
-  ctx.font = '26px ui-monospace, Menlo, monospace';
-  ctx.fillText(`${amostras.length} amostras · ${perdas} perdas`, 34, pxA - 96);
-  ctx.fillStyle = '#5ce39a';
-  ctx.fillText('sai da sessão para guardar', 34, pxA - 56);
+  ctx.fillStyle = '#4a5468';
+  ctx.font = '34px ui-monospace, Menlo, monospace';
+  ctx.fillText(`${Math.max(passoGuiao, 0) + 1} de ${GUIAO.length}`, pxL / 2, 52);
 
+  if (!p) { tex.needsUpdate = true; return; }
+
+  // The instruction, in the largest type that fits: it has to be legible
+  // from a metre and a half away with a hand already in motion.
+  ctx.fillStyle = '#eef3ff';
+  ctx.font = 'bold 54px -apple-system, system-ui, sans-serif';
+  ctx.fillText(p.diz, pxL / 2, pxA / 2 - 30);
+
+  if (faseGuiao === 'preparar') {
+    const falta = Math.ceil((PREPARAR - (relogio - tFase)) / 1000);
+    ctx.fillStyle = '#ffb45c';
+    ctx.font = 'bold 96px -apple-system, system-ui, sans-serif';
+    ctx.fillText(String(Math.max(falta, 1)), pxL / 2, pxA / 2 + 84);
+  } else if (faseGuiao === 'executar') {
+    ctx.fillStyle = '#5ce39a';
+    ctx.font = 'bold 76px -apple-system, system-ui, sans-serif';
+    ctx.fillText('AGORA', pxL / 2, pxA / 2 + 84);
+    const frac = Math.min((relogio - tFase) / EXECUTAR, 1);
+    ctx.fillStyle = 'rgba(92,227,154,0.4)';
+    ctx.fillRect(60, pxA - 44, (pxL - 120) * (1 - frac), 10);
+  }
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#4a5468';
+  ctx.font = '26px ui-monospace, Menlo, monospace';
+  ctx.fillText(`${amostras.length} amostras \u00b7 ${perdas} perdas \u00b7 m\u00e3o ${maos[0].activa ? 'vista' : 'PERDIDA'}`,
+               34, pxA - 78);
   tex.needsUpdate = true;
 }
 
@@ -255,6 +276,49 @@ function desenharPainel() {
 //  the player is facing the window or the door, and the region where the
 //  hand vanishes is fixed relative to the face, not to the room.
 // ═══════════════════════════════════════════════════════════
+// ── THE SCRIPT ────────────────────────────────────────────
+// The first session recorded sixty-four seconds of continuous stream and
+// left me guessing which parts were throws. Guessing badly: it labelled
+// forty-eight, when there had been about thirteen. So the lab now runs the
+// session — it asks for one throw at a time, counts down, and stamps the
+// recording with which throw this is and how hard it was meant to be.
+// Every sample then belongs to a known attempt.
+const GUIAO = [
+  { tipo: 'aquecer',  forca: '—',      diz: 'Deixa as mãos caídas e não mexas' },
+  { tipo: 'lance',    forca: 'suave',  diz: 'Atira com pouca força' },
+  { tipo: 'lance',    forca: 'suave',  diz: 'Outra vez, com pouca força' },
+  { tipo: 'lance',    forca: 'medio',  diz: 'Agora com força média' },
+  { tipo: 'lance',    forca: 'medio',  diz: 'Outra vez, força média' },
+  { tipo: 'lance',    forca: 'medio',  diz: 'Mais uma, força média' },
+  { tipo: 'lance',    forca: 'forte',  diz: 'Agora com tudo' },
+  { tipo: 'lance',    forca: 'forte',  diz: 'Outra vez, com tudo' },
+  { tipo: 'lance',    forca: 'forte',  diz: 'Mais uma, com tudo' },
+  { tipo: 'falso',    forca: '—',      diz: 'Recua a mão e NÃO atires' },
+  { tipo: 'falso',    forca: '—',      diz: 'Outra vez: recua e pára' },
+  { tipo: 'aceno',    forca: '—',      diz: 'Acena, como um adeus' },
+  { tipo: 'lance',    forca: 'medio',  diz: 'Último: força média' }
+];
+const PREPARAR = 2600, EXECUTAR = 2400, PAUSA = 900;
+
+let passoGuiao = -1, faseGuiao = 'espera', tFase = 0;
+function etiquetaActual() {
+  const p = GUIAO[passoGuiao];
+  if (!p || faseGuiao !== 'executar') return '';
+  return `${passoGuiao}:${p.tipo}:${p.forca}`;
+}
+
+function avancarGuiao(t) {
+  if (passoGuiao < 0) { passoGuiao = 0; faseGuiao = 'preparar'; tFase = t; return; }
+  const decorrido = t - tFase;
+  if (faseGuiao === 'preparar' && decorrido > PREPARAR) { faseGuiao = 'executar'; tFase = t; }
+  else if (faseGuiao === 'executar' && decorrido > EXECUTAR) { faseGuiao = 'pausa'; tFase = t; }
+  else if (faseGuiao === 'pausa' && decorrido > PAUSA) {
+    passoGuiao++;
+    if (passoGuiao >= GUIAO.length) { faseGuiao = 'fim'; }
+    else { faseGuiao = 'preparar'; tFase = t; }
+  }
+}
+
 const amostras = [];
 const MAX_AMOSTRAS = 60000;      // about eleven minutes at 90 Hz
 let lances = 0, perdas = 0, t0 = 0;
@@ -274,13 +338,16 @@ function registar(t, m, evento) {
     r3(m.rel.x), r3(m.rel.y), r3(m.rel.z),        // wrist, head-relative
     r3(m.vel.x), r3(m.vel.y), r3(m.vel.z),        // velocity, head-relative
     r3(m.vel.length()),
+    r3(m.pos.x), r3(m.pos.y), r3(m.pos.z),        // world, to separate head motion
     m.estado,
+    etiquetaActual(),
     evento || ''
   ]);
 }
 
 const CABECALHO = ['t_ms','mao','seguida','rel_x','rel_y','rel_z',
-                   'vel_x','vel_y','vel_z','vel_abs','estado','evento'];
+                   'vel_x','vel_y','vel_z','vel_abs',
+                   'mundo_x','mundo_y','mundo_z','estado','tarefa','evento'];
 
 function paraCSV() {
   const linhas = [CABECALHO.join(',')];
@@ -370,15 +437,21 @@ function actualizarMao(m, t, dt) {
 
   // visionOS replays the last known transform once a hand leaves the
   // cameras, so a perfectly still wrist means 'gone', not 'steady'.
-  if (tmp.distanceToSquared(m.posAnt) < 1e-10 && m.temAnt) {
-    m.tParado += dt;
-    if (m.tParado > 0.25) {
+  //
+  // This compared a WORLD position against a value stored in head-relative
+  // coordinates — two different spaces, so the distance was never near
+  // zero and a loss was never once detected. The first session came back
+  // claiming the hand was tracked 100% of the time, which the frozen
+  // samples in the same file flatly contradicted.
+  if (tmp.distanceToSquared(m.posMundoAnt) < 4e-8 && m.temAnt) {
+    m.congelado += dt;
+    if (m.congelado > 0.12) {
       m.activa = false;
       for (const s of m.esferas.values()) s.visible = false;
       return passo(m, t, dt);
     }
   } else {
-    m.tParado = 0;
+    m.congelado = 0;
   }
 
   m.activa = true;
@@ -391,6 +464,7 @@ function actualizarMao(m, t, dt) {
     m.vel.copy(m.rel).sub(m.posAnt).divideScalar(dt);
   }
   m.posAnt.copy(m.rel);
+  m.posMundoAnt.copy(m.pos);
   m.temAnt = true;
 
   for (const nome of nomes) {
@@ -420,13 +494,15 @@ function empurrarRasto(p) {
   rastoGeo.setDrawRange(0, rastoN);
 }
 
-let ultimo = 0, contaPainel = 0;
+let ultimo = 0, contaPainel = 0, painelPosto = false, relogio = 0;
 
 function frame() {
   const agora = performance.now();
   const dt = Math.min((agora - ultimo) / 1000, 0.05);
   ultimo = agora;
   const t = agora - t0;
+  relogio = t;
+  avancarGuiao(t);
 
   cena.updateMatrixWorld(true);
   const cam = render.xr.getCamera();
@@ -439,12 +515,17 @@ function frame() {
     if (m.idx === 0 && m.activa) empurrarRasto(m.pos);
   }
 
-  // Panel parked to the left, out of the throwing arc.
-  painel.malha.position.set(camPos.x, camPos.y - 0.15, camPos.z);
-  painel.malha.quaternion.copy(camQuat);
-  painel.malha.translateX(-0.62);
-  painel.malha.translateZ(-1.15);
-  painel.malha.rotateY(0.42);
+  // Anchored in the room, not to the face. It used to copy the head pose
+  // every frame, so turning to look at it took it along — it could never
+  // be read. Now it stands where the player was facing at the start and
+  // turns to face them, which is what a board on a wall does.
+  if (!painelPosto && camPos.lengthSq() > 0) {
+    const frente = new THREE.Vector3(0, 0, -1).applyQuaternion(camQuat);
+    frente.y = 0; frente.normalize();
+    painel.malha.position.set(camPos.x + frente.x * 1.7, 1.45, camPos.z + frente.z * 1.7);
+    painelPosto = true;
+  }
+  painel.malha.lookAt(camPos.x, camPos.y, camPos.z);
 
   contaPainel += dt;
   if (contaPainel > 0.12) { contaPainel = 0; desenharPainel(); actualizarNumeros(); }
@@ -472,6 +553,7 @@ entrarBt.addEventListener('click', async () => {
     render.xr.setReferenceSpaceType('local-floor');
     await render.xr.setSession(sessao);
     t0 = performance.now(); ultimo = t0;
+    passoGuiao = -1; faseGuiao = 'espera'; painelPosto = false;
     render.setAnimationLoop(frame);
     estadoEl.textContent = 'A gravar. Faz os arremessos e depois sai da sessão.';
     sessao.addEventListener('end', async () => {
