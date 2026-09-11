@@ -61,8 +61,10 @@
       <li><strong>Bolas de neve:</strong> tira uma mão do volante e dá uma <strong>pancada
         no botão vermelho</strong> ao centro, como quem buzina. A bola vai contra o kart
         para onde estiveres a <strong>olhar</strong>. Podes conduzir com uma mão só.</li>
-      <li>Duas luzes no painel dizem o que o jogo vê de cada mão: cinzenta é perdida,
-        âmbar é aberta, verde é a agarrar.</li>
+      <li>Vês as tuas mãos desenhadas, e o aro <strong>acende</strong> quando te
+        aproximas e fica <strong>verde</strong> quando o agarras. No painel, duas luzes
+        e dois números por mão — o quanto está fechada e a que distância está do volante —
+        para nunca haver dúvidas sobre o que o jogo está a ver.</li>
     </ul>
   </div>
 
@@ -454,6 +456,14 @@ function porNaGrelha() {
 //  needs no calibration and cannot drift: whatever the headset thinks the
 //  absolute positions are, the angle between them is the same.
 // ═══════════════════════════════════════════════════════════
+// Drawn as a constellation of joints. Not decoration: without seeing your
+// own hands there is no way to tell whether they are where you think they
+// are, and every misunderstanding looks the same — like nothing happening.
+const geoJunta = new THREE.SphereGeometry(0.0085, 8, 6);
+const matAberta = new THREE.MeshBasicMaterial({ color: 0xffb45c });
+const matFechada = new THREE.MeshBasicMaterial({ color: 0x5ce39a });
+const matPerdida = new THREE.MeshBasicMaterial({ color: 0x55617a });
+
 const maos = [];
 for (let i = 0; i < 2; i++) {
   const mao = render.xr.getHand(i);
@@ -461,7 +471,7 @@ for (let i = 0; i < 2; i++) {
   maos.push({ mao, activa: false, pos: new THREE.Vector3(),
               posAnt: new THREE.Vector3(), parado: 0, temAnt: false,
               agarra: false, fecho: null, velocidade: 0,
-              anguloAoAgarrar: 0, avancoAoAgarrar: 0 });
+              anguloAoAgarrar: 0, avancoAoAgarrar: 0, esferas: new Map() });
 }
 
 // ── THE WHEEL ─────────────────────────────────────────────
@@ -471,10 +481,12 @@ for (let i = 0; i < 2; i++) {
 // whichever way you look.
 const volante = new THREE.Group();
 const aroRaio = 0.20;
+let aroVolante = null;
 {
   const mat = new THREE.MeshLambertMaterial({ color: 0x24406e });
   const aro = new THREE.Mesh(new THREE.TorusGeometry(aroRaio, 0.026, 12, 40), mat);
   volante.add(aro);
+  aroVolante = aro;
   const matVerm = new THREE.MeshLambertMaterial({ color: 0xe2564f });
   for (let i = 0; i < 3; i++) {
     const ang = i * Math.PI * 2 / 3 + Math.PI / 2;
@@ -571,26 +583,37 @@ function avancoDe(pos) {
 function lerMaos(dt, t) {
   porVolante();
 
-  let somaGiro = 0, somaAvanco = 0, nAgarradas = 0;
+  let somaGiro = 0, somaAvanco = 0, nAgarradas = 0, maisPerto = 9;
 
   for (const m of maos) {
     const fecho = m.activa ? medirFecho(m) : null;
     m.fecho = fecho;
 
-    if (!m.activa || fecho === null) { m.agarra = false; continue; }
+    if (!m.activa) { m.agarra = false; continue; }
 
-    const perto = m.pos.distanceTo(posVolante) < 0.42;
+    const dAoCentro = m.pos.distanceTo(posVolante);
+    maisPerto = Math.min(maisPerto, dAoCentro);
+    const perto = dAoCentro < 0.48;
+
+    // If the fingers cannot be measured — some runtimes give a wrist and
+    // little else — then holding a hand steady on the wheel counts as
+    // gripping. A driver whose hands are seen but whose fingers are not
+    // would otherwise be unable to drive at all, with nothing on screen to
+    // explain why.
+    const semDedos = fecho === null;
+    const fechada = semDedos ? (m.velocidade < 0.35) : (fecho < FECHA);
+    const aberta = semDedos ? (m.velocidade > 1.2) : (fecho > ABRE);
 
     // The horn: a hand driven into the middle of the wheel. Not a pose,
     // a movement \u2014 so resting a hand near the boss does not fire.
-    if (!m.agarra && perto && m.pos.distanceTo(posVolante) < 0.13 && m.velocidade > 0.5) {
+    if (!m.agarra && dAoCentro < 0.14 && m.velocidade > 0.5) {
       cmd.buzina = true;
     }
 
     if (m.agarra) {
       // Holds until the hand opens or wanders off the wheel.
-      if (fecho > ABRE || m.pos.distanceTo(posVolante) > 0.55) m.agarra = false;
-    } else if (fecho < FECHA && perto) {
+      if (aberta || dAoCentro > 0.62) m.agarra = false;
+    } else if (fechada && perto) {
       m.agarra = true;
       m.anguloAoAgarrar = anguloNoVolante(m.pos);
       m.avancoAoAgarrar = avancoDe(m.pos);
@@ -607,6 +630,12 @@ function lerMaos(dt, t) {
   }
 
   cmd.agarrado = nAgarradas > 0;
+
+  // The wheel answers to a hand coming near it, so there is never a doubt
+  // about whether you are close enough to take hold.
+  const brilho = nAgarradas ? 1 : (maisPerto < 0.48 ? 0.55 : 0);
+  aroVolante.material.color.setHex(nAgarradas ? 0x5ce39a : (brilho ? 0x9fc0ff : 0x24406e));
+  aroVolante.material.emissive.setHex(nAgarradas ? 0x1d6b3a : 0x000000);
 
   if (!nAgarradas) {
     // Nobody is holding on. Coast rather than brake: letting go to throw a
@@ -642,6 +671,18 @@ function actualizarMao(m, dt) {
   } else { m.parado = 0; m.activa = true; }
   if (m.temAnt) m.velocidade = m.pos.distanceTo(tmpV) / Math.max(dt, 1e-3);
   m.pos.copy(tmpV); m.posAnt.copy(tmpV); m.temAnt = true;
+
+  const mat = !m.activa ? matPerdida : (m.agarra ? matFechada : matAberta);
+  for (const nome in juntas) {
+    const j = juntas[nome];
+    let e = m.esferas.get(nome);
+    if (!e) { e = new THREE.Mesh(geoJunta, mat); cena.add(e); m.esferas.set(nome, e); }
+    e.material = mat;
+    if (!m.activa || j.visible === false) { e.visible = false; continue; }
+    j.getWorldPosition(tmpV2);
+    e.position.copy(tmpV2);
+    e.visible = true;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -926,9 +967,19 @@ function desenharPainel() {
     ctx.fillText(nomes[i], x, y + 11);
   });
   ctx.textAlign = 'right';
+  ctx.fillStyle = cmd.agarrado ? '#5ce39a' : '#ffb45c';
+  ctx.font = '22px ui-monospace, Menlo, monospace';
+  ctx.fillText(cmd.agarrado ? 'a conduzir' : 'fecha a m\u00e3o no volante', pxL - 28, 84);
+  // The two numbers that decide everything, in plain sight: how closed the
+  // fingers are, and how far the hand is from the wheel.
+  ctx.font = '19px ui-monospace, Menlo, monospace';
   ctx.fillStyle = '#4a5468';
-  ctx.font = '20px ui-monospace, Menlo, monospace';
-  ctx.fillText(cmd.agarrado ? 'a conduzir' : 'fecha a m\u00e3o no volante', pxL - 28, 86);
+  maos.forEach((m, i) => {
+    const txt = !m.activa ? 'sem m\u00e3o'
+      : `${m.fecho === null ? 'dedos ?' : 'fecho ' + m.fecho.toFixed(2)}` +
+        `  ${m.pos.distanceTo(posVolante).toFixed(2)} m`;
+    ctx.fillText(`${nomes[i]}: ${txt}`, pxL - 28, 112 + i * 26);
+  });
 
   tex.needsUpdate = true;
 }
@@ -1020,11 +1071,11 @@ function frame() {
 
   painel.malha.position.copy(camPos);
   painel.malha.quaternion.copy(camQuat);
-  // Up and to the side: in third person the middle of the view belongs to
-  // the kart and the road ahead of it.
-  painel.malha.translateX(-0.52);
-  painel.malha.translateY(0.24);
-  painel.malha.translateZ(-1.05);
+  // Straight ahead and high. Off to one side it was outside the field of
+  // view altogether — unreadable, and worse, invisible enough that there
+  // was no way to know the game was telling you anything.
+  painel.malha.translateY(0.42);
+  painel.malha.translateZ(-1.35);
 
   contaPainel += dt;
   if (contaPainel > 0.08) { contaPainel = 0; desenharPainel(); }
