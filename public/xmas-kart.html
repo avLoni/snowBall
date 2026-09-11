@@ -51,12 +51,17 @@
   <div class="cartao">
     <h2>Os comandos</h2>
     <ul>
-      <li><strong>Volante:</strong> põe as duas mãos à frente, à distância de um volante.
-        Rodas como rodarias um a sério — mão esquerda a subir vira à esquerda.</li>
-      <li><strong>Acelerar:</strong> empurra o volante para a frente. Puxa-o para ti para travar.</li>
+      <li><strong>Volante:</strong> está mesmo lá, à tua frente, à altura do peito.
+        Agarra-o e roda como rodarias um a sério — mão esquerda a subir vira à esquerda.
+        Ele roda debaixo das tuas mãos, para veres o que o jogo está a receber.</li>
+      <li><strong>Acelerar:</strong> empurra o volante para a frente. Puxa-o para ti para travar.
+        Quinze centímetros chegam para ir do nada ao máximo.</li>
+      <li><strong>A cabeça não conduz.</strong> Podes olhar para onde quiseres — os comandos
+        são medidos no espaço, não em relação à tua cara. Olhar serve para <em>mirar</em>.</li>
       <li><strong>Buzina:</strong> junta as mãos ao centro, como quem carrega no meio do volante —
         e sai uma bola de neve contra o kart para onde estiveres a <strong>olhar</strong>.</li>
-      <li>Se largares as mãos, o kart abranda sozinho.</li>
+      <li>Se largares as mãos, o kart abranda sozinho — uma falha de rastreamento
+        não te pára a corrida.</li>
     </ul>
   </div>
 
@@ -118,6 +123,19 @@ const CFG = {
 };
 
 const cena = new THREE.Scene();
+
+// Two frames, kept apart on purpose.
+//
+//   mundo    the circuit, the scenery, the other karts. This is what turns
+//            when you steer: the player cannot physically spin on the spot,
+//            so the world rotates around them instead.
+//
+//   cena     the wheel in your hands, the panel, your own hands. Fixed to
+//            the room, so that turning your head moves nothing but your
+//            view — which was the whole problem before.
+const mundo = new THREE.Group();
+cena.add(mundo);
+
 cena.background = new THREE.Color(0x112248);
 cena.fog = new THREE.Fog(0x304790, 40, 170);
 const camara = new THREE.PerspectiveCamera(72, 1, 0.05, 400);
@@ -191,7 +209,7 @@ function direcaoEm(t) {
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
-  cena.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0xe8eeff })));
+  mundo.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0xe8eeff })));
 
   // Packed-snow edges, a shade darker, so the limits of the road read at
   // speed without needing a painted line.
@@ -207,21 +225,21 @@ function direcaoEm(t) {
     const gg = new THREE.BufferGeometry();
     gg.setAttribute('position', new THREE.Float32BufferAttribute(v2, 3));
     gg.setIndex(i2); gg.computeVertexNormals();
-    cena.add(new THREE.Mesh(gg, new THREE.MeshLambertMaterial({ color: 0xbcd0f4 })));
+    mundo.add(new THREE.Mesh(gg, new THREE.MeshLambertMaterial({ color: 0xbcd0f4 })));
   }
 }
 
 // ── the world outside the road ────────────────────────────
 {
   const g = new THREE.CircleGeometry(220, 56).rotateX(-Math.PI / 2);
-  cena.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0xdfe9ff })));
+  mundo.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0xdfe9ff })));
 }
 new THREE.TextureLoader().load('sky.jpg', (tex) => {
   tex.colorSpace = THREE.SRGBColorSpace;
   const m = new THREE.Mesh(new THREE.SphereGeometry(200, 40, 24),
     new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false }));
   m.renderOrder = -1000;
-  cena.add(m);
+  mundo.add(m);
 }, undefined, () => {});
 
 // Snow, only near the player: a full field of it across a 400 m circuit
@@ -239,7 +257,7 @@ const NEVE = 900;
   var neve = new THREE.Points(g, new THREE.PointsMaterial({
     color: 0xffffff, size: 0.16, transparent: true, opacity: 0.85, fog: false }));
   neve.frustumCulled = false;
-  cena.add(neve);
+  mundo.add(neve);
 }
 
 // ── scenery, planted along the verges ─────────────────────
@@ -287,7 +305,7 @@ const LUZES = [];
 for (let i = 0; i < 6; i++) {
   const l = new THREE.PointLight(0xffb066, 0, 16, 2);
   l.position.set(0, -60, 0);
-  cena.add(l);
+  mundo.add(l);
   LUZES.push(l);
 }
 let proxLuz = 0;
@@ -331,7 +349,7 @@ for (const item of CENARIO) {
     }
     grupo.instanceMatrix.needsUpdate = true;
     grupo.frustumCulled = false;
-    cena.add(grupo);
+    mundo.add(grupo);
   }, undefined, () => {});
 }
 
@@ -353,7 +371,7 @@ for (const item of CENARIO) {
     new THREE.MeshLambertMaterial({ map: tex }));
   meta.position.set(p.x, 0.04, p.z);
   meta.rotation.y = Math.atan2(d.x, d.z);
-  cena.add(meta);
+  mundo.add(meta);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -389,7 +407,7 @@ function fazerKart(cor, comBoneco) {
       new THREE.MeshLambertMaterial({ color: 0xffe9c9 }));
     cabeca.position.set(0, 1.06, 0.25); g.add(cabeca);
   }
-  cena.add(g);
+  mundo.add(g);
   return g;
 }
 
@@ -439,82 +457,122 @@ for (let i = 0; i < 2; i++) {
               posAnt: new THREE.Vector3(), parado: 0, temAnt: false });
 }
 
+// ── THE WHEEL ─────────────────────────────────────────────
+// A real object in a fixed place, not an outline that follows your hands.
+// You reach out, take hold of it, and turn it. It sits where a wheel sits
+// in a car: in front of the seat, at chest height, and it stays there
+// whichever way you look.
 const volante = new THREE.Group();
+const aroRaio = 0.20;
 {
-  const aro = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.022, 10, 36),
-    new THREE.MeshBasicMaterial({ color: 0x9fc0ff, transparent: true, opacity: 0.65 }));
+  const mat = new THREE.MeshLambertMaterial({ color: 0x24406e });
+  const aro = new THREE.Mesh(new THREE.TorusGeometry(aroRaio, 0.026, 12, 40), mat);
   volante.add(aro);
+  const matVerm = new THREE.MeshLambertMaterial({ color: 0xe2564f });
   for (let i = 0; i < 3; i++) {
-    const raio = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.012, 0.012),
-      new THREE.MeshBasicMaterial({ color: 0x9fc0ff, transparent: true, opacity: 0.5 }));
-    raio.rotation.z = i * Math.PI * 2 / 3;
-    raio.position.set(Math.cos(i * Math.PI * 2 / 3) * 0.09, Math.sin(i * Math.PI * 2 / 3) * 0.09, 0);
+    const ang = i * Math.PI * 2 / 3 + Math.PI / 2;
+    const raio = new THREE.Mesh(new THREE.BoxGeometry(aroRaio, 0.03, 0.022), mat);
+    raio.position.set(Math.cos(ang) * aroRaio / 2, Math.sin(ang) * aroRaio / 2, 0);
+    raio.rotation.z = ang;
     volante.add(raio);
   }
-  const centro = new THREE.Mesh(new THREE.CircleGeometry(0.05, 20),
-    new THREE.MeshBasicMaterial({ color: 0xffb45c, transparent: true, opacity: 0.55 }));
+  const centro = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.03, 20)
+    .rotateX(Math.PI / 2), matVerm);
   volante.add(centro);
-  volante.visible = false;
+  // Two marks at nine and three o'clock: without them a round wheel gives
+  // no clue how far it has been turned.
+  for (const s2 of [-1, 1]) {
+    const marca = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.05),
+      new THREE.MeshLambertMaterial({ color: 0xffffff }));
+    marca.position.set(s2 * aroRaio, 0, 0);
+    volante.add(marca);
+  }
   cena.add(volante);
 }
 
+// Where the seat faces. Captured once, from the head, and then left alone:
+// after this the player may look wherever they like without touching the
+// controls.
+let frenteJogo = 0;
+const dirFrente = new THREE.Vector3(0, 0, -1);
+const dirDireita = new THREE.Vector3(1, 0, 0);
+function fixarFrente() {
+  const e = new THREE.Euler().setFromQuaternion(camQuat, 'YXZ');
+  frenteJogo = e.y;
+  dirFrente.set(-Math.sin(frenteJogo), 0, -Math.cos(frenteJogo));
+  dirDireita.set(Math.cos(frenteJogo), 0, -Math.sin(frenteJogo));
+}
+
 const cmd = { direcao: 0, acelerador: 0, agarrado: false, buzina: false };
-let distNeutra = 0.42, zNeutro = -0.42, agarradoDesde = 0;
+let zNeutro = 0.42, agarradoDesde = 0, distAoAgarrar = 0.40;
 const camPos = new THREE.Vector3(), camQuat = new THREE.Quaternion(), camInv = new THREE.Quaternion();
-const rel0 = new THREE.Vector3(), rel1 = new THREE.Vector3(), meio = new THREE.Vector3();
+const posVolante = new THREE.Vector3(), meio = new THREE.Vector3(), entreMaos = new THREE.Vector3();
 let recarga = 0;
 
+function porVolante() {
+  // Chest height, an arm's length out along the seat's facing. Not the
+  // head's facing \u2014 a wheel that swung about as you glanced at a rival
+  // would be unusable, and unrecognisable as a wheel.
+  posVolante.copy(camPos).addScaledVector(dirFrente, 0.46);
+  posVolante.y = camPos.y - 0.42;
+  volante.position.copy(posVolante);
+  volante.rotation.set(0, frenteJogo, 0);
+}
+
 function lerMaos(dt, t) {
+  porVolante();
   const [a, b] = maos;
   if (!a.activa || !b.activa) {
-    // Hands down: the kart coasts. Better than cutting the throttle dead,
-    // which would punish a moment of lost tracking with a dead stop.
+    // Hands down: coast. A blink of lost tracking must not be a handbrake.
     cmd.agarrado = false;
     cmd.acelerador *= Math.pow(0.25, dt);
     cmd.direcao *= Math.pow(0.08, dt);
-    volante.visible = false;
+    volante.rotation.z = 0;
     return;
   }
-  camInv.copy(camQuat).invert();
-  rel0.copy(a.pos).sub(camPos).applyQuaternion(camInv);
-  rel1.copy(b.pos).sub(camPos).applyQuaternion(camInv);
-  // Left hand is whichever is further left, not whichever the runtime
-  // happens to have numbered first.
-  const esq = rel0.x <= rel1.x ? rel0 : rel1;
-  const dir = rel0.x <= rel1.x ? rel1 : rel0;
 
-  const separacao = esq.distanceTo(dir);
+  // Which hand is on the left of the SEAT, not of the head.
+  const eA = a.pos.clone().sub(camPos).dot(dirDireita);
+  const eB = b.pos.clone().sub(camPos).dot(dirDireita);
+  const esq = eA <= eB ? a.pos : b.pos;
+  const dir = eA <= eB ? b.pos : a.pos;
+
+  entreMaos.copy(dir).sub(esq);
+  const separacao = entreMaos.length();
   meio.copy(esq).add(dir).multiplyScalar(0.5);
 
-  // Too close together, too far apart, or behind you: not a wheel.
-  const plausivel = separacao > 0.16 && separacao < 0.95 && meio.z < -0.12;
+  const perto = meio.distanceTo(posVolante);
+  const plausivel = separacao > 0.18 && separacao < 0.95 && perto < 0.55;
   if (!plausivel) {
-    if (separacao < 0.16 && cmd.agarrado && t - agarradoDesde > 500) cmd.buzina = true;
+    // Hands brought together at the middle of the wheel: the horn.
+    if (separacao < 0.16 && cmd.agarrado && t - agarradoDesde > 400) cmd.buzina = true;
     cmd.agarrado = false;
-    volante.visible = false;
     return;
   }
   if (!cmd.agarrado) {
-    cmd.agarrado = true; agarradoDesde = t;
-    distNeutra = separacao;
-    zNeutro = meio.z;
+    cmd.agarrado = true;
+    agarradoDesde = t;
+    zNeutro = meio.clone().sub(camPos).dot(dirFrente);
   }
 
-  // Steering: the tilt of the line between the hands. Left hand rising
-  // turns left, exactly as a real wheel does.
-  const ang = Math.atan2(esq.y - dir.y, dir.x - esq.x);
-  cmd.direcao = THREE.MathUtils.clamp(ang / 0.8, -1, 1);
+  // ── STEERING, measured in the world ──────────────────────
+  // The rise of the line joining the hands, above horizontal. A world
+  // measurement: it does not care where the head is pointing, which is
+  // exactly what went wrong when it was measured in head coordinates.
+  const inclinacao = Math.asin(THREE.MathUtils.clamp(
+    -entreMaos.y / Math.max(separacao, 1e-4), -1, 1));
+  cmd.direcao = THREE.MathUtils.clamp(inclinacao / 0.75, -1, 1);
 
-  // Throttle: push the wheel away to go, pull it in to brake. Measured
-  // against wherever the wheel was first taken hold of, so tall and short
-  // players both start from neutral.
-  const empurrado = (zNeutro - meio.z) / 0.16;
-  cmd.acelerador = THREE.MathUtils.clamp(empurrado, -1, 1);
+  // ── THROTTLE ─────────────────────────────────────────────
+  // How far the wheel has been pushed away from the body, along the seat's
+  // facing. Also a world measurement, and also immune to head movement.
+  const avanco = meio.clone().sub(camPos).dot(dirFrente) - zNeutro;
+  cmd.acelerador = THREE.MathUtils.clamp(avanco / 0.14, -1, 1);
 
-  volante.visible = true;
-  volante.position.copy(meio).applyQuaternion(camQuat).add(camPos);
-  volante.quaternion.copy(camQuat);
-  volante.rotateZ(-cmd.direcao * 0.8);
+  // The wheel turns under your hands, and slides with the throttle, so
+  // there is never any doubt about what the game thinks you are doing.
+  volante.rotation.z = -cmd.direcao * 0.75;
+  volante.position.addScaledVector(dirFrente, avanco * 0.55);
 }
 
 function actualizarMao(m, dt) {
@@ -560,7 +618,7 @@ function atirarBola() {
   const alvo = kartOlhado();
   const m = new THREE.Mesh(geoBola, matBola);
   m.position.copy(camPos).addScaledVector(frente, 0.6);
-  cena.add(m);
+  mundo.add(m);
   const v = new THREE.Vector3();
   if (alvo) {
     // Lead the target: throwing at where a kart is, rather than where it
@@ -594,7 +652,7 @@ function moverBolas(dt, agora) {
       }
     }
     if (fim || b.m.position.y < 0.1 || agora - b.nasceu > 3000) {
-      cena.remove(b.m); bolas.splice(i, 1);
+      mundo.remove(b.m); bolas.splice(i, 1);
     }
   }
 }
@@ -796,7 +854,6 @@ function desenharPainel() {
 //  FRAME
 // ═══════════════════════════════════════════════════════════
 let ultimo = 0, t0 = 0, contaPainel = 0;
-const alvoCamara = new THREE.Vector3();
 
 function frame() {
   const agora = performance.now();
@@ -817,6 +874,9 @@ function frame() {
   if (estadoJogo === 'contagem') {
     contagem -= dt;
     if (contagem <= 0) { estadoJogo = 'a correr'; inicioVolta = t; somVolta(); }
+    // Take the seat's facing from wherever they are looking during the
+    // countdown, and leave it alone from then on.
+    if (contagem > 0.8) fixarFrente();
   } else if (estadoJogo === 'a correr') {
     tempo += dt;
     const voltasAntes = karts[0].voltas;
@@ -837,15 +897,19 @@ function frame() {
 
   moverBolas(dt, agora);
 
-  // The camera rides the kart: behind and above, easing into place so a
-  // bump does not throw the player's head about. The kart's own heading
-  // drives it, never the player's head, or looking sideways would steer.
+  // The world is moved and turned so that the player's kart is always
+  // beneath them and pointing the way the seat faces. They stay put and
+  // the circuit swings around them, which is the only option when there is
+  // no swivel chair — and it keeps the wheel where they left it.
   const eu = karts[0];
-  const atras = 0.0;
-  alvoCamara.set(eu.pos.x - Math.sin(eu.rumo) * atras, 0, eu.pos.z - Math.cos(eu.rumo) * atras);
   eu.grupo.visible = false;             // you are sitting in it
-  cena.position.set(-alvoCamara.x, 0, -alvoCamara.z);
-  cena.rotation.y = 0;
+  const giro = frenteJogo - (eu.rumo + Math.PI);
+  mundo.rotation.y = giro;
+  const c = Math.cos(giro), sn = Math.sin(giro);
+  mundo.position.set(
+    camPos.x - (eu.pos.x * c + eu.pos.z * sn),
+    0,
+    camPos.z - (-eu.pos.x * sn + eu.pos.z * c));
 
   // Engine note follows speed.
   if (actx && motor) {
@@ -853,8 +917,9 @@ function frame() {
     ganhoMotor.gain.value = estadoJogo === 'a correr' ? 0.035 + eu.vel * 0.0032 : 0.01;
   }
 
-  // Snow follows the player so it is always around them.
-  neve.position.set(alvoCamara.x, 0, alvoCamara.z);
+  // Snow keeps company with the kart, since a field of it across four
+  // hundred metres of circuit would be points nobody ever sees.
+  neve.position.set(eu.pos.x, 0, eu.pos.z);
   const sp = neve.geometry.attributes.position;
   for (let i = 0; i < NEVE; i++) {
     let y = sp.getY(i) - dt * (2.2 + (i % 7) * 0.3);
@@ -879,7 +944,7 @@ function reiniciar(t) {
   porNaGrelha();
   estadoJogo = 'contagem'; contagem = 4.0; tempo = 0;
   melhorVolta = 0; inicioVolta = t;
-  for (const b of bolas) cena.remove(b.m);
+  for (const b of bolas) mundo.remove(b.m);
   bolas.length = 0;
 }
 
