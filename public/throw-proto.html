@@ -59,17 +59,17 @@
       total certeza: <strong>vem aí um lançamento</strong>. Mas não diz com que
       força — porque entre desaparecer e atirar pode passar-se uma espera, à procura
       do alvo certo, e essa espera não é esforço nenhum.</p>
-    <p>A força vem de a <strong>cabeça pender para o lado</strong>. Não de virar nem
-      de baixar — de <em>inclinar</em>, o queixo a cair na direção de um ombro. Um
-      lançamento a sério não é um braço: o ombro que atira desce, o tronco roda, e a
-      cabeça vai atrás. Um lançamento contido é quase só cotovelo, e a cabeça fica
-      direita.</p>
-    <p>Medimos <strong>2° e 4°</strong> nos suaves, <strong>3° a 8°</strong> nos médios
-      e <strong>9° a 19°</strong> nos fortes — ordenados na perfeição, sem uma única
-      troca. Um aceno deu 0,1°.</p>
-    <p>Virar e baixar a cabeça acontece sempre que se olha para um alvo, e por isso
-      carregam a pontaria tanto como o esforço. Inclinar não: olhar para um sítio não
-      te inclina a cabeça. E quem dispara é sempre a mão, nunca a cabeça.</p>
+    <p>A bola vai para o boneco para onde estiveres a <strong>olhar</strong>. A direção
+      da cabeça é o único sinal preciso e estável que o visor dá — e é para lá que já
+      estás a olhar quando queres acertar em alguma coisa.</p>
+    <p>A força do gesto <strong>não entra</strong>. Quatro modelos tentaram lê-la e os
+      quatro derivaram: a referência mudava quatro a seis graus entre sessões, quando
+      toda a gama útil era de dez ou quinze. Essa informação vive no instante da
+      largada, e a largada é a única coisa que as câmaras nunca veem.</p>
+    <p>Mas não basta olhar de passagem: mede-se quanto do lançamento passaste com os
+      olhos no <em>mesmo</em> boneco, desde que pegaste na bola. Um relance conta pouco,
+      e a bola sai a meio caminho. A perícia passou a ser <strong>olhar bem e escolher
+      o momento</strong>.</p>
   </div>
 
   <div class="cartao">
@@ -354,8 +354,8 @@ function desenharPainel() {
     // During the blind stretch the meter really is draining, because the
     // force really is still being decided: the longer the hand stays away,
     // the gentler the throw turns out to be.
-    // Live, and honest: it climbs as the body turns into the throw.
-    const f = forcaDe(inclinaCabeca);
+    // Live, and honest: how steadily you are looking at one snowman.
+    const f = firmeza;
     ctx.fillStyle = f > 0.66 ? '#5ce39a' : f > 0.33 ? '#ffb45c' : '#e2564f';
     ctx.beginPath(); ctx.roundRect(bx, by, Math.max(bl * f, bh), bh, 23); ctx.fill();
   }
@@ -363,7 +363,7 @@ function desenharPainel() {
   ctx.font = '24px ui-monospace, Menlo, monospace';
   ctx.fillStyle = '#4a5468';
   ctx.font = '24px ui-monospace, Menlo, monospace';
-  ctx.fillText('for\u00e7a \u00b7 inclina a cabe\u00e7a', bx, by + bh + 14);
+  ctx.fillText(alvoFixado ? 'olha bem para ele' : 'olha para um boneco', bx, by + bh + 14);
 
   tex.needsUpdate = true;
 }
@@ -464,7 +464,25 @@ function alcanceDe(v) {
 }
 
 const camInv = new THREE.Quaternion();
+const ARRIBA = new THREE.Vector3(0, 1, 0);
 let ladoDoBraco = 1;    // +1 right-handed, −1 left; set when the ball is taken
+
+// How much of the throw was spent looking at one snowman. Sampled every
+// frame from the moment the ball is taken, so a glance at the end does not
+// count as taking aim.
+let firmeza = 0, olhadasTotal = 0, olhadasNoAlvo = 0;
+let alvoFixado = null;
+
+function medirFirmeza() {
+  if (estado !== 'namao' && estado !== 'balanco' && estado !== 'noAr') return;
+  olhadasTotal++;
+  const a = alvoOlhado();
+  if (a) {
+    if (a === alvoFixado) olhadasNoAlvo++;
+    else { alvoFixado = a; olhadasNoAlvo = 1; }
+  }
+  firmeza = olhadasTotal ? olhadasNoAlvo / olhadasTotal : 0;
+}
 
 // The target the player is looking at, if any is close enough to the line
 // of sight to be a plausible intention.
@@ -490,21 +508,54 @@ function lancar(forca, desdeMao) {
   // player is already looking where they want the ball to go.
   camara.getWorldDirection(frente);
   frente.normalize();
-  const lado = tmp.set(0, 1, 0).cross(frente).normalize();
-  const dir = frente.clone().applyAxisAngle(lado, -AJUSTE.loft).normalize();
+  // frente × cima gives RIGHT. The other way round gives left, which is
+  // what was here, and every ball left a right-hander's body on the wrong
+  // side of them.
+  const direita = tmp.copy(frente).cross(ARRIBA).normalize();
+  const daCabeca = frente.clone();
 
-  let vel = AJUSTE.velFraca + (AJUSTE.velForte - AJUSTE.velFraca) * forca;
-
-  // Pull the range part of the way towards the snowman being looked at.
-  // The throw still has to be in the right neighbourhood — a soft toss
-  // will not reach the far one however hard you stare.
-  const alvo = alvoOlhado();
-  let ajudou = 0;
-  if (alvo) {
+  // ── THE BALL GOES WHERE YOU ARE LOOKING ────────────────
+  // Force is no longer an input, because it never really was one. Four
+  // models tried to read it out of the gesture and all four drifted: the
+  // baseline moved four to six degrees between sessions while the whole
+  // usable range was ten or fifteen. The information lives in the instant
+  // of release, and the release is the one thing the cameras never see.
+  //
+  // So the range comes from the head, which is the only precise, stable
+  // channel this device has — and which the player is already pointing at
+  // whatever they want to hit.
+  const alvo = alvoFixado && alvoFixado.vivo ? alvoFixado : alvoOlhado();
+  let vel, ajudou = 0;
+  if (alvo && firmeza > 0.55) {
+    // Looking steadily at a snowman: the ball is thrown to it.
+    vel = velocidadeParaAlcance(alvo.grupo.position.length());
+    ajudou = 1;
+  } else if (alvo) {
+    // Glancing at it. Part of the way, in proportion to how steady the
+    // gaze was — so looking properly is a skill, not a formality.
     const querido = velocidadeParaAlcance(alvo.grupo.position.length());
-    ajudou = (querido - vel) * AJUSTE.ajudaMax;
-    vel += ajudou;
+    const medio = velocidadeParaAlcance(8);
+    vel = medio + (querido - medio) * (firmeza / 0.55);
+    ajudou = firmeza;
+  } else {
+    // Nothing being looked at: a middling throw down the line of sight.
+    vel = velocidadeParaAlcance(8);
   }
+  // Aim the horizontal direction at the snowman too, not just the range.
+  // Looking at something and having the ball sail past its shoulder
+  // because the head was a degree off is the kind of near-miss that reads
+  // as the game being broken.
+  if (alvo && firmeza > 0.35) {
+    tmp.copy(alvo.grupo.position).sub(camPos); tmp.y = 0;
+    if (tmp.lengthSq() > 0.01) {
+      tmp.normalize();
+      frente.lerp(tmp, Math.min(firmeza, 1)).normalize();
+      frente.y = daCabeca.y * (1 - Math.min(firmeza, 1));
+      frente.normalize();
+    }
+  }
+  const dir = frente.clone().applyAxisAngle(direita, AJUSTE.loft).normalize();
+
   const m = new THREE.Mesh(geoVoo, matVoo);
   // NOT from where the hand was found. That instant is late in the
   // follow-through: measured over a session, the hand sits anywhere from
@@ -514,10 +565,9 @@ function lancar(forca, desdeMao) {
   // The release happened earlier, in front and on the throwing side. That
   // point is not observable, so it is reconstructed: shoulder height,
   // forward, offset towards whichever hand threw.
-  const lateral = tmp.set(0, 1, 0).cross(frente).normalize();
   m.position.copy(camPos)
     .addScaledVector(frente, 0.45)
-    .addScaledVector(lateral, ladoDoBraco * 0.18);
+    .addScaledVector(direita, ladoDoBraco * 0.18);
   m.position.y = camPos.y - 0.18;
   cena.add(m);
   voando.push({ m, v: dir.multiplyScalar(vel), nasceu: performance.now(),
@@ -593,6 +643,7 @@ function passoDoArremesso(t) {
         // appearing off their right shoulder.
         tmp.copy(m.pos).sub(camPos).applyQuaternion(camInv);
         ladoDoBraco = tmp.x >= 0 ? 1 : -1;
+        firmeza = 0; olhadasTotal = 0; olhadasNoAlvo = 0; alvoFixado = null;
         angAoAgarrar.setFromQuaternion(camQuat, 'YXZ');
         bola.visible = halo.visible = false;
         return;
@@ -649,6 +700,8 @@ function passoDoArremesso(t) {
         // The blind time no longer decides anything. It only ever told us
         // that a throw was armed, which is exactly what the hand
         // disappearing means — and that much it says with near certainty.
+        // Recorded, not used. The tilt is still logged every throw so the
+        // question stays open — but nothing in the game hangs on it.
         forcaGuardada = forcaDe(inclinaCabeca);
         ultimaExt = ext; ultimoCego = cego;
         lancar(forcaGuardada, m.pos);
@@ -757,6 +810,7 @@ function frame() {
   camara.quaternion.copy(camQuat);
 
   for (const m of maos) actualizarMao(m, t, dt);
+  medirFirmeza();
   passoDoArremesso(t);
   moverBolas(dt, t);
 
