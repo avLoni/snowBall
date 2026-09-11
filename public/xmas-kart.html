@@ -54,8 +54,9 @@
       <li><strong>Agarra mesmo:</strong> abre a mão, leva-a ao volante e <strong>fecha</strong>.
         Enquanto estiver fechada estás a conduzir; abre-a para largar. Roda como rodarias um a sério — mão esquerda a subir vira à esquerda.
         Ele roda debaixo das tuas mãos, para veres o que o jogo está a receber.</li>
-      <li><strong>Acelerar:</strong> empurra o volante para a frente. Puxa-o para ti para travar.
-        Quinze centímetros chegam para ir do nada ao máximo.</li>
+      <li><strong>Acelerar:</strong> estica os braços. Braços fora é a fundo, cotovelos
+        dobrados é ponto morto, mãos ao peito trava. A medida é <strong>do teu braço</strong>,
+        não um número fixo — uma criança e um adulto têm o mesmo curso, à escala de cada um.</li>
       <li><strong>A cabeça não conduz.</strong> Podes olhar para onde quiseres — os comandos
         são medidos no espaço, não em relação à tua cara. Olhar serve para <em>mirar</em>.</li>
       <li><strong>Bolas de neve:</strong> tira uma mão do volante e dá uma <strong>pancada
@@ -64,7 +65,8 @@
       <li>Vês as tuas mãos desenhadas, e o aro <strong>acende</strong> quando te
         aproximas e fica <strong>verde</strong> quando o agarras. No painel, duas luzes
         e dois números por mão — o quanto está fechada e a que distância está do volante —
-        para nunca haver dúvidas sobre o que o jogo está a ver.</li>
+        para nunca haver dúvidas sobre o que o jogo está a ver. A barra verde mostra o
+        acelerador, com o ponto morto marcado a branco.</li>
     </ul>
   </div>
 
@@ -112,8 +114,8 @@ const CFG = {
   voltas: 3,
   nKarts: 6,
   larguraPista: 7.0,        // metres, half-width of the tarmac
-  velMax: 17,               // m/s at full throttle
-  velBot: [15.4, 15.0, 14.6, 14.2, 13.8],
+  velMax: 23,               // m/s at full throttle
+  velBot: [20.6, 20.0, 19.4, 18.8, 18.2],
   aceleracao: 9,
   travagem: 16,
   atrito: 3.2,
@@ -594,25 +596,52 @@ const camPos = new THREE.Vector3(), camQuat = new THREE.Quaternion(), camInv = n
 const posVolante = new THREE.Vector3(), tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
 
 function porVolante() {
-  posVolante.copy(camPos).addScaledVector(dirFrente, 0.46);
+  posVolante.copy(camPos).addScaledVector(dirFrente, corpo.neutro);
   posVolante.y = camPos.y - 0.42;
   volante.position.copy(posVolante);
   volante.rotation.set(0, frenteJogo, 0);
 }
 
-// The angle of a hand around the wheel's face, and how far it has pushed
-// the wheel away. Both measured in the world, so the head is free.
+// The angle of a hand around the wheel's face. Measured in the world, so
+// the head is free to look wherever it likes.
 function anguloNoVolante(pos) {
   tmpA.copy(pos).sub(posVolante);
-  const x = tmpA.dot(dirDireita);
-  const y = tmpA.y;
-  return Math.atan2(y, x);
+  return Math.atan2(tmpA.y, tmpA.dot(dirDireita));
 }
 function avancoDe(pos) {
   return tmpB.copy(pos).sub(camPos).dot(dirFrente);
 }
 
+// ── HOW FAR IS 'ARMS OUT'? ────────────────────────────────
+// Scaled to the person. The throttle used to be measured against wherever
+// the hands happened to close on the wheel, which meant that taking hold
+// with the arms already extended left nowhere to push: the log shows the
+// correlation between reach and throttle running BACKWARDS, at −0.44.
+//
+// So it is absolute now, against the player's own arm. Reach is about
+// 0.38 of a person's height, and eye height gives the height: a child and
+// an adult get the same travel in proportion to themselves, and neither
+// has to find some invisible neutral point.
+const corpo = { estatura: 1.72, neutro: 0.38, cheio: 0.66 };
+function medirCorpo() {
+  if (camPos.y < 0.6 || camPos.y > 2.3) return;
+  const est = camPos.y + 0.10;
+  corpo.estatura += (est - corpo.estatura) * 0.02;
+  corpo.neutro = corpo.estatura * 0.22;   // elbows bent, hands on the wheel
+  corpo.cheio  = corpo.estatura * 0.38;   // arms out
+}
+function aceleradorDe(avanco) {
+  if (avanco >= corpo.neutro) {
+    return THREE.MathUtils.clamp(
+      (avanco - corpo.neutro) / Math.max(corpo.cheio - corpo.neutro, 0.05), 0, 1);
+  }
+  // Pulled in towards the chest: braking, over the same span.
+  return -THREE.MathUtils.clamp(
+    (corpo.neutro - avanco) / Math.max(corpo.neutro * 0.45, 0.05), 0, 1);
+}
+
 function lerMaos(dt, t) {
+  medirCorpo();
   porVolante();
 
   let somaGiro = 0, somaAvanco = 0, nAgarradas = 0, maisPerto = 9;
@@ -658,11 +687,16 @@ function lerMaos(dt, t) {
     }
 
     if (m.agarra) {
-      // How far this hand has carried the wheel round since it took hold.
+      // Steering stays relative — how far THIS hand has carried the wheel
+      // round since it took hold — because a wheel has no absolute zero.
       let d = anguloNoVolante(m.pos) - m.anguloAoAgarrar;
       d = ((d + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
       somaGiro += d;
-      somaAvanco += avancoDe(m.pos) - m.avancoAoAgarrar;
+      // The throttle does not: it is how far out the arm is, full stop.
+      // Being absolute is what lets a hand leave without the reading
+      // jumping — the log caught one such handover costing 0.71 of
+      // throttle in a single step.
+      somaAvanco += aceleradorDe(avancoDe(m.pos));
       nAgarradas++;
     }
   }
@@ -689,11 +723,19 @@ function lerMaos(dt, t) {
   // lets a driver take a hand off to throw without losing the car.
   const giro = somaGiro / nAgarradas;
   cmd.direcao = THREE.MathUtils.clamp(-giro / 0.9, -1, 1);
-  const avanco = somaAvanco / nAgarradas;
-  cmd.acelerador = THREE.MathUtils.clamp(avanco / 0.14, -1, 1);
+
+  // Eased rather than taken raw: one hand letting go changes which hands
+  // are averaged, and without this the number would step.
+  const alvoAcel = somaAvanco / nAgarradas;
+  cmd.acelerador += (alvoAcel - cmd.acelerador) * Math.min(dt * 8, 1);
 
   volante.rotation.z = -cmd.direcao * 0.9;
-  volante.position.addScaledVector(dirFrente, avanco * 0.5);
+  // The wheel sits where the hands have pushed it, so the throttle is a
+  // thing you can see rather than a number you have to guess at.
+  const avancoMedio = maos.reduce((s2, m) => m.agarra ? s2 + avancoDe(m.pos) : s2, 0) / nAgarradas;
+  volante.position.copy(camPos)
+    .addScaledVector(dirFrente, THREE.MathUtils.clamp(avancoMedio, 0.2, corpo.cheio + 0.06));
+  volante.position.y = camPos.y - 0.42;
 }
 
 function actualizarMao(m, dt) {
@@ -959,7 +1001,7 @@ function desenharPainel() {
   // The standings, because half the fun of a race is knowing who is next.
   const lista = ordenar();
   ctx.font = '26px ui-monospace, Menlo, monospace';
-  let y = 250;
+  let y = 262;
   for (const k of lista) {
     ctx.fillStyle = k.eJogador ? '#ffb45c' : '#5d6a86';
     ctx.fillText(`${k.posicao}. ${k.nome}`, 28, y);
@@ -990,6 +1032,21 @@ function desenharPainel() {
     ctx.fillText('junta as m\u00e3os para recome\u00e7ar', pxL / 2, 330);
   }
 
+  // The throttle as a bar, with the neutral point marked: without seeing
+  // it, pushing an arm out and having nothing happen is unreadable.
+  {
+    const bx = 28, by = 214, bl = pxL - 56, bh = 26;
+    ctx.fillStyle = 'rgba(255,255,255,0.09)';
+    ctx.beginPath(); ctx.roundRect(bx, by, bl, bh, 13); ctx.fill();
+    const a = cmd.acelerador;
+    const meio2 = bx + bl * 0.32;
+    ctx.fillStyle = a >= 0 ? '#5ce39a' : '#e2564f';
+    if (a >= 0) ctx.fillRect(meio2, by, (bl - (meio2 - bx)) * a, bh);
+    else ctx.fillRect(meio2 + (meio2 - bx) * a, by, -(meio2 - bx) * a, bh);
+    ctx.fillStyle = '#eef3ff';
+    ctx.fillRect(meio2 - 1.5, by - 4, 3, bh + 8);
+  }
+
   // Two lamps, one per hand. Without them there is no way to tell a hand
   // the game has lost from a hand it thinks is open, and the difference
   // decides whether the kart moves.
@@ -1017,7 +1074,7 @@ function desenharPainel() {
     const txt = !m.activa ? 'sem m\u00e3o'
       : `${m.fecho === null ? 'dedos ?' : m.fecho.toFixed(2)}` +
         `/${lim ? lim.fecha.toFixed(2) : '?'}${lim && lim.aprendido ? '*' : ''}` +
-        `  ${m.pos.distanceTo(posVolante).toFixed(2)}m`;
+        `  bra\u00e7o ${avancoDe(m.pos).toFixed(2)}m`;
     ctx.fillText(`${nomes[i]}: ${txt}`, pxL - 28, 112 + i * 26);
   });
 
@@ -1035,8 +1092,9 @@ const MAX_REG = 30000;
 let ultimoRegisto = 0, ultimoEnvio = 0;
 
 const CABECALHO = ['t_ms','estado','vel','direccao','acelerador','agarrado',
-                   'e_vista','e_fecho','e_min','e_max','e_lim','e_agarra','e_dist',
-                   'd_vista','d_fecho','d_min','d_max','d_lim','d_agarra','d_dist',
+                   'e_vista','e_fecho','e_lim','e_agarra','e_dist','e_avanco',
+                   'd_vista','d_fecho','d_lim','d_agarra','d_dist','d_avanco',
+                   'estatura','neutro','cheio',
                    'volante_x','volante_y','volante_z','cab_x','cab_y','cab_z','frente'];
 
 function anotar(t) {
@@ -1045,10 +1103,12 @@ function anotar(t) {
   const linha = [Math.round(t), estadoJogo, r3(karts[0].vel),
                  r3(cmd.direcao), r3(cmd.acelerador), cmd.agarrado ? 1 : 0];
   for (const m of maos) {
-    linha.push(m.activa ? 1 : 0, r3(m.fecho), r3(m.fechoMin), r3(m.fechoMax),
+    linha.push(m.activa ? 1 : 0, r3(m.fecho),
                m.limiar ? r3(m.limiar.fecha) : '', m.agarra ? 1 : 0,
-               r3(m.activa ? m.pos.distanceTo(posVolante) : null));
+               r3(m.activa ? m.pos.distanceTo(posVolante) : null),
+               r3(m.activa ? avancoDe(m.pos) : null));
   }
+  linha.push(r3(corpo.estatura), r3(corpo.neutro), r3(corpo.cheio));
   linha.push(r3(posVolante.x), r3(posVolante.y), r3(posVolante.z),
              r3(camPos.x), r3(camPos.y), r3(camPos.z), r3(frenteJogo));
   registo.push(linha);
