@@ -44,24 +44,25 @@
   <header>
     <p class="olho">Vision Pro · WebXR · corrida</p>
     <h1>Super<br><em>xMas Kart</em></h1>
-    <p class="lead">Estica as mãos, agarra o volante que não existe, e conduz.
+    <p class="lead">Agarra o volante à tua frente e conduz, com o teu kart à vista.
       Cinco adversários, três voltas, e bolas de neve para quem se puser à frente.</p>
   </header>
 
   <div class="cartao">
     <h2>Os comandos</h2>
     <ul>
-      <li><strong>Volante:</strong> está mesmo lá, à tua frente, à altura do peito.
-        Agarra-o e roda como rodarias um a sério — mão esquerda a subir vira à esquerda.
+      <li><strong>Agarra mesmo:</strong> abre a mão, leva-a ao volante e <strong>fecha</strong>.
+        Enquanto estiver fechada estás a conduzir; abre-a para largar. Roda como rodarias um a sério — mão esquerda a subir vira à esquerda.
         Ele roda debaixo das tuas mãos, para veres o que o jogo está a receber.</li>
       <li><strong>Acelerar:</strong> empurra o volante para a frente. Puxa-o para ti para travar.
         Quinze centímetros chegam para ir do nada ao máximo.</li>
       <li><strong>A cabeça não conduz.</strong> Podes olhar para onde quiseres — os comandos
         são medidos no espaço, não em relação à tua cara. Olhar serve para <em>mirar</em>.</li>
-      <li><strong>Buzina:</strong> junta as mãos ao centro, como quem carrega no meio do volante —
-        e sai uma bola de neve contra o kart para onde estiveres a <strong>olhar</strong>.</li>
-      <li>Se largares as mãos, o kart abranda sozinho — uma falha de rastreamento
-        não te pára a corrida.</li>
+      <li><strong>Bolas de neve:</strong> tira uma mão do volante e dá uma <strong>pancada
+        no botão vermelho</strong> ao centro, como quem buzina. A bola vai contra o kart
+        para onde estiveres a <strong>olhar</strong>. Podes conduzir com uma mão só.</li>
+      <li>Duas luzes no painel dizem o que o jogo vê de cada mão: cinzenta é perdida,
+        âmbar é aberta, verde é a agarrar.</li>
     </ul>
   </div>
 
@@ -377,6 +378,10 @@ for (const item of CENARIO) {
 // ═══════════════════════════════════════════════════════════
 //  KARTS
 // ═══════════════════════════════════════════════════════════
+// How the kart is framed. Pulled out as numbers because the right feel
+// for this is a matter of taste and will want changing.
+const CAMARA = { atras: 4.6, altura: 1.9 };
+
 const CORES = [0xe2564f, 0x45c66a, 0xffb45c, 0x5b8cff, 0xc27ee0, 0x4dd6ff];
 const NOMES_BOT = ['Rena', 'Gelo', 'Pinha', 'Sino', 'Estrela'];
 
@@ -454,7 +459,9 @@ for (let i = 0; i < 2; i++) {
   const mao = render.xr.getHand(i);
   cena.add(mao);
   maos.push({ mao, activa: false, pos: new THREE.Vector3(),
-              posAnt: new THREE.Vector3(), parado: 0, temAnt: false });
+              posAnt: new THREE.Vector3(), parado: 0, temAnt: false,
+              agarra: false, fecho: null, velocidade: 0,
+              anguloAoAgarrar: 0, avancoAoAgarrar: 0 });
 }
 
 // ── THE WHEEL ─────────────────────────────────────────────
@@ -503,76 +510,123 @@ function fixarFrente() {
   dirDireita.set(Math.cos(frenteJogo), 0, -Math.sin(frenteJogo));
 }
 
+// ── GRIPPING ──────────────────────────────────────────────
+// The wheel is held when a hand CLOSES on it, and held until that hand
+// opens again. Measured from the fingers: the tips of a closed fist sit
+// close to the wrist, an open hand's do not, and the ratio is taken
+// against the hand's own size so it works for a child and an adult alike.
+//
+// This replaces a rule that asked whether two hands happened to be the
+// right distance apart. That rule could not tell letting go from reaching
+// for something, it needed both hands at once, and when it lost its
+// bearings there was no way to give them back \u2014 which is why the throttle
+// sometimes stuck and no amount of stretching would clear it.
+const PONTAS = ['index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-finger-tip'];
+const FECHA = 1.75, ABRE = 2.00;      // hysteresis, so a grip does not flicker
+
+function medirFecho(m) {
+  const j = m.mao.joints;
+  if (!j || !j['wrist']) return null;
+  const pulso = new THREE.Vector3(), meta = new THREE.Vector3(), ponta = new THREE.Vector3();
+  j['wrist'].getWorldPosition(pulso);
+  const jm = j['middle-finger-metacarpal'] || j['middle-finger-phalanx-proximal'];
+  if (!jm) return null;
+  jm.getWorldPosition(meta);
+  const escala = pulso.distanceTo(meta);
+  if (escala < 0.02) return null;
+  let soma = 0, n = 0;
+  for (const nome of PONTAS) {
+    if (!j[nome]) continue;
+    j[nome].getWorldPosition(ponta);
+    soma += ponta.distanceTo(pulso) / escala;
+    n++;
+  }
+  return n ? soma / n : null;
+}
+
 const cmd = { direcao: 0, acelerador: 0, agarrado: false, buzina: false };
-let zNeutro = 0.42, agarradoDesde = 0, distAoAgarrar = 0.40;
-const camPos = new THREE.Vector3(), camQuat = new THREE.Quaternion(), camInv = new THREE.Quaternion();
-const posVolante = new THREE.Vector3(), meio = new THREE.Vector3(), entreMaos = new THREE.Vector3();
 let recarga = 0;
+const camPos = new THREE.Vector3(), camQuat = new THREE.Quaternion(), camInv = new THREE.Quaternion();
+const posVolante = new THREE.Vector3(), tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
 
 function porVolante() {
-  // Chest height, an arm's length out along the seat's facing. Not the
-  // head's facing \u2014 a wheel that swung about as you glanced at a rival
-  // would be unusable, and unrecognisable as a wheel.
   posVolante.copy(camPos).addScaledVector(dirFrente, 0.46);
   posVolante.y = camPos.y - 0.42;
   volante.position.copy(posVolante);
   volante.rotation.set(0, frenteJogo, 0);
 }
 
+// The angle of a hand around the wheel's face, and how far it has pushed
+// the wheel away. Both measured in the world, so the head is free.
+function anguloNoVolante(pos) {
+  tmpA.copy(pos).sub(posVolante);
+  const x = tmpA.dot(dirDireita);
+  const y = tmpA.y;
+  return Math.atan2(y, x);
+}
+function avancoDe(pos) {
+  return tmpB.copy(pos).sub(camPos).dot(dirFrente);
+}
+
 function lerMaos(dt, t) {
   porVolante();
-  const [a, b] = maos;
-  if (!a.activa || !b.activa) {
-    // Hands down: coast. A blink of lost tracking must not be a handbrake.
-    cmd.agarrado = false;
-    cmd.acelerador *= Math.pow(0.25, dt);
-    cmd.direcao *= Math.pow(0.08, dt);
-    volante.rotation.z = 0;
+
+  let somaGiro = 0, somaAvanco = 0, nAgarradas = 0;
+
+  for (const m of maos) {
+    const fecho = m.activa ? medirFecho(m) : null;
+    m.fecho = fecho;
+
+    if (!m.activa || fecho === null) { m.agarra = false; continue; }
+
+    const perto = m.pos.distanceTo(posVolante) < 0.42;
+
+    // The horn: a hand driven into the middle of the wheel. Not a pose,
+    // a movement \u2014 so resting a hand near the boss does not fire.
+    if (!m.agarra && perto && m.pos.distanceTo(posVolante) < 0.13 && m.velocidade > 0.5) {
+      cmd.buzina = true;
+    }
+
+    if (m.agarra) {
+      // Holds until the hand opens or wanders off the wheel.
+      if (fecho > ABRE || m.pos.distanceTo(posVolante) > 0.55) m.agarra = false;
+    } else if (fecho < FECHA && perto) {
+      m.agarra = true;
+      m.anguloAoAgarrar = anguloNoVolante(m.pos);
+      m.avancoAoAgarrar = avancoDe(m.pos);
+    }
+
+    if (m.agarra) {
+      // How far this hand has carried the wheel round since it took hold.
+      let d = anguloNoVolante(m.pos) - m.anguloAoAgarrar;
+      d = ((d + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      somaGiro += d;
+      somaAvanco += avancoDe(m.pos) - m.avancoAoAgarrar;
+      nAgarradas++;
+    }
+  }
+
+  cmd.agarrado = nAgarradas > 0;
+
+  if (!nAgarradas) {
+    // Nobody is holding on. Coast rather than brake: letting go to throw a
+    // snowball must not cost the race.
+    cmd.direcao *= Math.pow(0.2, dt);
+    cmd.acelerador *= Math.pow(0.55, dt);
+    volante.rotation.z += (0 - volante.rotation.z) * Math.min(dt * 4, 1);
     return;
   }
 
-  // Which hand is on the left of the SEAT, not of the head.
-  const eA = a.pos.clone().sub(camPos).dot(dirDireita);
-  const eB = b.pos.clone().sub(camPos).dot(dirDireita);
-  const esq = eA <= eB ? a.pos : b.pos;
-  const dir = eA <= eB ? b.pos : a.pos;
-
-  entreMaos.copy(dir).sub(esq);
-  const separacao = entreMaos.length();
-  meio.copy(esq).add(dir).multiplyScalar(0.5);
-
-  const perto = meio.distanceTo(posVolante);
-  const plausivel = separacao > 0.18 && separacao < 0.95 && perto < 0.55;
-  if (!plausivel) {
-    // Hands brought together at the middle of the wheel: the horn.
-    if (separacao < 0.16 && cmd.agarrado && t - agarradoDesde > 400) cmd.buzina = true;
-    cmd.agarrado = false;
-    return;
-  }
-  if (!cmd.agarrado) {
-    cmd.agarrado = true;
-    agarradoDesde = t;
-    zNeutro = meio.clone().sub(camPos).dot(dirFrente);
-  }
-
-  // ── STEERING, measured in the world ──────────────────────
-  // The rise of the line joining the hands, above horizontal. A world
-  // measurement: it does not care where the head is pointing, which is
-  // exactly what went wrong when it was measured in head coordinates.
-  const inclinacao = Math.asin(THREE.MathUtils.clamp(
-    -entreMaos.y / Math.max(separacao, 1e-4), -1, 1));
-  cmd.direcao = THREE.MathUtils.clamp(inclinacao / 0.75, -1, 1);
-
-  // ── THROTTLE ─────────────────────────────────────────────
-  // How far the wheel has been pushed away from the body, along the seat's
-  // facing. Also a world measurement, and also immune to head movement.
-  const avanco = meio.clone().sub(camPos).dot(dirFrente) - zNeutro;
+  // One hand or two, treated the same: each contributes how far IT has
+  // turned the wheel, and the average is the wheel's angle. That is what
+  // lets a driver take a hand off to throw without losing the car.
+  const giro = somaGiro / nAgarradas;
+  cmd.direcao = THREE.MathUtils.clamp(-giro / 0.9, -1, 1);
+  const avanco = somaAvanco / nAgarradas;
   cmd.acelerador = THREE.MathUtils.clamp(avanco / 0.14, -1, 1);
 
-  // The wheel turns under your hands, and slides with the throttle, so
-  // there is never any doubt about what the game thinks you are doing.
-  volante.rotation.z = -cmd.direcao * 0.75;
-  volante.position.addScaledVector(dirFrente, avanco * 0.55);
+  volante.rotation.z = -cmd.direcao * 0.9;
+  volante.position.addScaledVector(dirFrente, avanco * 0.5);
 }
 
 function actualizarMao(m, dt) {
@@ -586,6 +640,7 @@ function actualizarMao(m, dt) {
     m.parado++;
     if (m.parado > 6) m.activa = false;
   } else { m.parado = 0; m.activa = true; }
+  if (m.temAnt) m.velocidade = m.pos.distanceTo(tmpV) / Math.max(dt, 1e-3);
   m.pos.copy(tmpV); m.posAnt.copy(tmpV); m.temAnt = true;
 }
 
@@ -600,15 +655,24 @@ const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), frente = new THRE
 
 // The kart being looked at. Same idea as the snowball game: the head is
 // the precise channel, so it decides the target.
+// The kart being looked at. The gaze lives in the room and the karts live
+// in the world, so the look direction is carried into world coordinates
+// first — otherwise aiming would be wrong by exactly however far the
+// circuit has turned.
+const olharMundo = new THREE.Vector3(), deMim = new THREE.Vector3();
 function kartOlhado() {
   camara.getWorldDirection(frente); frente.normalize();
-  let melhor = null, menor = 0.30;
+  const giro = mundo.rotation.y;
+  const c = Math.cos(-giro), sn = Math.sin(-giro);
+  olharMundo.set(frente.x * c + frente.z * sn, 0, -frente.x * sn + frente.z * c).normalize();
+  const eu = karts[0];
+  let melhor = null, menor = 0.32;
   for (const k of karts) {
     if (k.eJogador) continue;
-    tmpV.copy(k.pos); tmpV.y = 0.8; tmpV.sub(camPos);
-    const d = tmpV.length();
-    if (d < 2 || d > 60) continue;
-    const ang = Math.acos(THREE.MathUtils.clamp(tmpV.normalize().dot(frente), -1, 1));
+    deMim.copy(k.pos).sub(eu.pos); deMim.y = 0;
+    const d = deMim.length();
+    if (d < 2 || d > 70) continue;
+    const ang = Math.acos(THREE.MathUtils.clamp(deMim.normalize().dot(olharMundo), -1, 1));
     if (ang < menor) { menor = ang; melhor = k; }
   }
   return melhor;
@@ -617,7 +681,11 @@ function kartOlhado() {
 function atirarBola() {
   const alvo = kartOlhado();
   const m = new THREE.Mesh(geoBola, matBola);
-  m.position.copy(camPos).addScaledVector(frente, 0.6);
+  // From the kart, in world coordinates — the snowball belongs to the
+  // race, not to the cockpit, and everything in the race lives in `mundo`.
+  const eu = karts[0];
+  m.position.set(eu.pos.x + Math.sin(eu.rumo) * 1.2, 1.0,
+                 eu.pos.z + Math.cos(eu.rumo) * 1.2);
   mundo.add(m);
   const v = new THREE.Vector3();
   if (alvo) {
@@ -629,7 +697,8 @@ function atirarBola() {
     v.copy(alvo.pos).add(tmpV); v.y = 0.75;
     v.sub(m.position).normalize().multiplyScalar(CFG.velBola);
   } else {
-    v.copy(frente).multiplyScalar(CFG.velBola);
+    v.copy(olharMundo).multiplyScalar(CFG.velBola);
+    v.y += 2;
   }
   bolas.push({ m, v, nasceu: performance.now() });
   somBola();
@@ -840,12 +909,26 @@ function desenharPainel() {
     ctx.font = '32px -apple-system, system-ui, sans-serif';
     ctx.fillText(`melhor volta ${melhorVolta.toFixed(1)} s`, pxL / 2, 260);
     ctx.fillText('junta as m\u00e3os para recome\u00e7ar', pxL / 2, 330);
-  } else if (!cmd.agarrado) {
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#ffb45c';
-    ctx.font = 'bold 34px -apple-system, system-ui, sans-serif';
-    ctx.fillText('m\u00e3os ao volante', pxL / 2, 400);
   }
+
+  // Two lamps, one per hand. Without them there is no way to tell a hand
+  // the game has lost from a hand it thinks is open, and the difference
+  // decides whether the kart moves.
+  const nomes = ['E', 'D'];
+  maos.forEach((m, i) => {
+    const x = pxL - 150 + i * 70, y = 30;
+    ctx.beginPath(); ctx.arc(x, y + 22, 22, 0, 7);
+    ctx.fillStyle = !m.activa ? '#3a4258' : (m.agarra ? '#5ce39a' : '#ffb45c');
+    ctx.fill();
+    ctx.fillStyle = '#0a1020';
+    ctx.font = 'bold 24px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(nomes[i], x, y + 11);
+  });
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#4a5468';
+  ctx.font = '20px ui-monospace, Menlo, monospace';
+  ctx.fillText(cmd.agarrado ? 'a conduzir' : 'fecha a m\u00e3o no volante', pxL - 28, 86);
 
   tex.needsUpdate = true;
 }
@@ -901,15 +984,22 @@ function frame() {
   // beneath them and pointing the way the seat faces. They stay put and
   // the circuit swings around them, which is the only option when there is
   // no swivel chair — and it keeps the wheel where they left it.
+  // ── THIRD PERSON ─────────────────────────────────────────
+  // The kart is placed out in front and below, the way it sits on a
+  // television screen, and the circuit is arranged around it. Seeing your
+  // own kart is most of what makes a kart game legible: you can tell a
+  // slide from a straight line, and you can see who is beside you.
   const eu = karts[0];
-  eu.grupo.visible = false;             // you are sitting in it
+  eu.grupo.visible = true;
   const giro = frenteJogo - (eu.rumo + Math.PI);
   mundo.rotation.y = giro;
   const c = Math.cos(giro), sn = Math.sin(giro);
+  // Where the kart should appear, relative to the head.
+  const dx = dirFrente.x * CAMARA.atras, dz = dirFrente.z * CAMARA.atras;
   mundo.position.set(
-    camPos.x - (eu.pos.x * c + eu.pos.z * sn),
-    0,
-    camPos.z - (-eu.pos.x * sn + eu.pos.z * c));
+    camPos.x + dx - (eu.pos.x * c + eu.pos.z * sn),
+    camPos.y - CAMARA.altura,
+    camPos.z + dz - (-eu.pos.x * sn + eu.pos.z * c));
 
   // Engine note follows speed.
   if (actx && motor) {
@@ -930,9 +1020,11 @@ function frame() {
 
   painel.malha.position.copy(camPos);
   painel.malha.quaternion.copy(camQuat);
-  painel.malha.translateX(-0.42);
-  painel.malha.translateY(-0.10);
-  painel.malha.translateZ(-1.0);
+  // Up and to the side: in third person the middle of the view belongs to
+  // the kart and the road ahead of it.
+  painel.malha.translateX(-0.52);
+  painel.malha.translateY(0.24);
+  painel.malha.translateZ(-1.05);
 
   contaPainel += dt;
   if (contaPainel > 0.08) { contaPainel = 0; desenharPainel(); }
