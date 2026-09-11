@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Super xMas Kart</title>
+<style>
+  :root {
+    --void:#070a12; --sup:#10151f; --linha:#1e2637;
+    --neve:#eef3ff; --dim:#7d879e; --fraco:#4a5468;
+    --feixe:#5b8cff; --brasa:#ffb45c; --bom:#5ce39a; --mau:#e2564f;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:0 22px 80px; background:var(--void); color:var(--neve);
+    font:16px/1.55 -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  canvas { display:none; }
+  .wrap { max-width:720px; margin:0 auto; }
+  header { padding:54px 0 20px; }
+  .olho { font-family:var(--mono); font-size:12px; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--fraco); margin:0 0 14px; }
+  h1 { font-size:clamp(38px,10vw,64px); font-weight:850; letter-spacing:-.04em;
+    line-height:.95; margin:0 0 16px; }
+  h1 em { font-style:normal; color:var(--mau); }
+  p.lead { color:var(--dim); max-width:52ch; margin:0; }
+  .cartao { background:var(--sup); border:1px solid var(--linha); border-radius:16px;
+    padding:20px; margin:18px 0; }
+  .cartao h2 { font-size:18px; margin:0 0 12px; }
+  ol, ul { color:var(--dim); font-size:15px; padding-left:20px; margin:0; }
+  li { margin-bottom:8px; }
+  strong { color:var(--neve); }
+  button { font:inherit; font-weight:650; border:none; border-radius:11px;
+    padding:15px 22px; cursor:pointer; background:var(--mau); color:#fff; }
+  button:disabled { opacity:.4; cursor:default; }
+  #estado { color:var(--dim); font-size:14px; margin-top:12px; min-height:20px; }
+  .nomeIn { width:100%; padding:14px; font-size:17px; border-radius:11px;
+    border:1px solid var(--linha); background:#0a0f1a; color:var(--neve);
+    margin-bottom:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="olho">Vision Pro · WebXR · corrida</p>
+    <h1>Super<br><em>xMas Kart</em></h1>
+    <p class="lead">Estica as mãos, agarra o volante que não existe, e conduz.
+      Cinco adversários, três voltas, e bolas de neve para quem se puser à frente.</p>
+  </header>
+
+  <div class="cartao">
+    <h2>Os comandos</h2>
+    <ul>
+      <li><strong>Volante:</strong> põe as duas mãos à frente, à distância de um volante.
+        Rodas como rodarias um a sério — mão esquerda a subir vira à esquerda.</li>
+      <li><strong>Acelerar:</strong> empurra o volante para a frente. Puxa-o para ti para travar.</li>
+      <li><strong>Buzina:</strong> junta as mãos ao centro, como quem carrega no meio do volante —
+        e sai uma bola de neve contra o kart para onde estiveres a <strong>olhar</strong>.</li>
+      <li>Se largares as mãos, o kart abranda sozinho.</li>
+    </ul>
+  </div>
+
+  <div class="cartao">
+    <input class="nomeIn" id="nome" placeholder="o teu nome" maxlength="14" autocomplete="off">
+    <button id="entrar" disabled>A verificar o dispositivo…</button>
+    <div id="estado"></div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// ═══════════════════════════════════════════════════════════
+//  SUPER xMAS KART
+//
+//  An imaginary steering wheel, held in both hands in front of the chest.
+//  That placement is not a stylistic choice: it is the one region where
+//  this headset tracks hands reliably, and what the game reads is the
+//  ANGLE BETWEEN the two hands — a relative measurement, immune to the
+//  drift that makes absolute hand positions untrustworthy.
+// ═══════════════════════════════════════════════════════════
+const $ = id => document.getElementById(id);
+const entrarBt = $('entrar'), estadoEl = $('estado');
+
+let xrOk = false;
+if (!navigator.xr) {
+  estadoEl.textContent = 'Sem WebXR. Abre esta página no Safari do Vision Pro.';
+} else {
+  navigator.xr.isSessionSupported('immersive-vr').then(ok => {
+    xrOk = ok; entrarBt.disabled = !ok;
+    entrarBt.textContent = ok ? 'Entrar na corrida' : 'Sessões imersivas indisponíveis';
+  });
+}
+
+const CFG = {
+  voltas: 3,
+  nKarts: 6,
+  larguraPista: 7.0,        // metres, half-width of the tarmac
+  velMax: 17,               // m/s at full throttle
+  velBot: [15.4, 15.0, 14.6, 14.2, 13.8],
+  aceleracao: 9,
+  travagem: 16,
+  atrito: 3.2,
+  viragem: 1.5,             // radians per second at full lock
+  foraDaPista: 0.45,        // speed multiplier in the snow
+  raioBola: 0.24,
+  velBola: 26,
+  atordoado: 1.6,           // seconds a kart spins after being hit
+  recargaBola: 1.1
+};
+
+const cena = new THREE.Scene();
+cena.background = new THREE.Color(0x112248);
+cena.fog = new THREE.Fog(0x304790, 40, 170);
+const camara = new THREE.PerspectiveCamera(72, 1, 0.05, 400);
+const render = new THREE.WebGLRenderer({ antialias: true });
+render.setPixelRatio(window.devicePixelRatio);
+render.xr.enabled = true;
+document.body.appendChild(render.domElement);
+
+cena.add(new THREE.HemisphereLight(0x9fc0ff, 0x33406a, 2.0));
+const lua = new THREE.DirectionalLight(0xdce8ff, 1.7);
+lua.position.set(-30, 50, -20);
+cena.add(lua);
+
+// ═══════════════════════════════════════════════════════════
+//  THE CIRCUIT
+//  One closed spline. Everything else — the road surface, the fences, the
+//  starting grid, where the bots steer, how far round a kart is — is
+//  derived from it, so the track exists in exactly one place.
+// ═══════════════════════════════════════════════════════════
+const PONTOS = [
+  [0, -60], [34, -52], [52, -26], [48, 4], [62, 26], [58, 52],
+  [30, 66], [-4, 60], [-20, 38], [-14, 14], [-34, 0], [-58, -6],
+  [-64, -32], [-44, -56], [-16, -64]
+].map(p => new THREE.Vector3(p[0], 0, p[1]));
+
+const curva = new THREE.CatmullRomCurve3(PONTOS, true, 'catmullrom', 0.4);
+const AMOSTRAS = 600;
+const pontosPista = curva.getSpacedPoints(AMOSTRAS);
+const COMPRIMENTO = curva.getLength();
+
+// Lookup from world position to "how far round the lap" — the basis of
+// standings, of lap counting, and of every bot's steering.
+function progressoDe(pos) {
+  let melhor = 0, dist2 = Infinity;
+  for (let i = 0; i < AMOSTRAS; i++) {
+    const p = pontosPista[i];
+    const d = (p.x - pos.x) ** 2 + (p.z - pos.z) ** 2;
+    if (d < dist2) { dist2 = d; melhor = i; }
+  }
+  return { t: melhor / AMOSTRAS, desvio: Math.sqrt(dist2), indice: melhor };
+}
+
+function pontoEm(t) {
+  const i = ((t % 1) + 1) % 1;
+  return curva.getPointAt(i);
+}
+function direcaoEm(t) {
+  const i = ((t % 1) + 1) % 1;
+  return curva.getTangentAt(i).setY(0).normalize();
+}
+
+// ── the road surface ──────────────────────────────────────
+{
+  const L = CFG.larguraPista;
+  const verts = [], uvs = [], idx = [];
+  const cima = new THREE.Vector3(0, 1, 0), lado = new THREE.Vector3();
+  for (let i = 0; i <= AMOSTRAS; i++) {
+    const t = i / AMOSTRAS;
+    const p = pontoEm(t), d = direcaoEm(t);
+    lado.copy(d).cross(cima).normalize();
+    verts.push(p.x - lado.x * L, 0.02, p.z - lado.z * L);
+    verts.push(p.x + lado.x * L, 0.02, p.z + lado.z * L);
+    uvs.push(0, t * 90, 1, t * 90);
+    if (i < AMOSTRAS) {
+      const a = i * 2;
+      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  cena.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0xe8eeff })));
+
+  // Packed-snow edges, a shade darker, so the limits of the road read at
+  // speed without needing a painted line.
+  for (const s of [-1, 1]) {
+    const v2 = [], i2 = [];
+    for (let i = 0; i <= AMOSTRAS; i++) {
+      const t = i / AMOSTRAS, p = pontoEm(t), d = direcaoEm(t);
+      lado.copy(d).cross(cima).normalize();
+      v2.push(p.x + lado.x * L * s, 0.03, p.z + lado.z * L * s);
+      v2.push(p.x + lado.x * (L + 1.3) * s, 0.05, p.z + lado.z * (L + 1.3) * s);
+      if (i < AMOSTRAS) { const a = i * 2; i2.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    }
+    const gg = new THREE.BufferGeometry();
+    gg.setAttribute('position', new THREE.Float32BufferAttribute(v2, 3));
+    gg.setIndex(i2); gg.computeVertexNormals();
+    cena.add(new THREE.Mesh(gg, new THREE.MeshLambertMaterial({ color: 0xbcd0f4 })));
+  }
+}
+
+// ── the world outside the road ────────────────────────────
+{
+  const g = new THREE.CircleGeometry(220, 56).rotateX(-Math.PI / 2);
+  cena.add(new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color: 0xdfe9ff })));
+}
+new THREE.TextureLoader().load('sky.jpg', (tex) => {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const m = new THREE.Mesh(new THREE.SphereGeometry(200, 40, 24),
+    new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide, fog: false, depthWrite: false }));
+  m.renderOrder = -1000;
+  cena.add(m);
+}, undefined, () => {});
+
+// Snow, only near the player: a full field of it across a 400 m circuit
+// would be tens of thousands of points nobody can see.
+const NEVE = 900;
+{
+  const g = new THREE.BufferGeometry();
+  const p = new Float32Array(NEVE * 3);
+  for (let i = 0; i < NEVE; i++) {
+    p[i*3] = (Math.random() - 0.5) * 60;
+    p[i*3+1] = Math.random() * 26;
+    p[i*3+2] = (Math.random() - 0.5) * 60;
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+  var neve = new THREE.Points(g, new THREE.PointsMaterial({
+    color: 0xffffff, size: 0.16, transparent: true, opacity: 0.85, fog: false }));
+  neve.frustumCulled = false;
+  cena.add(neve);
+}
+
+// ── scenery, planted along the verges ─────────────────────
+function materialBarato(raiz) {
+  raiz.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    const v = o.material;
+    const m = new THREE.MeshLambertMaterial({
+      map: v.map || null,
+      color: v.color ? v.color.clone() : new THREE.Color(0xffffff),
+      side: v.side, transparent: v.transparent, alphaTest: v.alphaTest });
+    if (m.map) {
+      m.map.colorSpace = THREE.SRGBColorSpace;
+      m.emissive = new THREE.Color(0xffffff);
+      m.emissiveMap = m.map;
+      m.emissiveIntensity = 0.2;
+    }
+    o.material = m;
+  });
+}
+
+function semear(s) {
+  return function () {
+    s |= 0; s = (s + 0x6D2B79F5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Laid out from a seed, so the circuit is the same every time somebody
+// races it — which matters the moment two people compare lap times.
+const CENARIO = [
+  { f: 'pine.glb',   n: 60, alt: 4.2, de: 2.5, ate: 16 },
+  { f: 'tree_a.glb', n: 44, alt: 4.6, de: 3.0, ate: 18 },
+  { f: 'tree_b.glb', n: 36, alt: 3.8, de: 3.0, ate: 20 },
+  { f: 'tree_c.glb', n: 36, alt: 4.2, de: 3.5, ate: 20 },
+  { f: 'rocks.glb',  n: 28, alt: 1.0, de: 1.8, ate: 9 },
+  { f: 'log.glb',    n: 14, alt: 0.8, de: 2.2, ate: 8 },
+  { f: 'lantern.glb',n: 26, alt: 2.6, de: 1.5, ate: 2.4 },
+  { f: 'cabin.glb',  n: 3,  alt: 4.5, de: 14,  ate: 22 }
+];
+
+const LUZES = [];
+for (let i = 0; i < 6; i++) {
+  const l = new THREE.PointLight(0xffb066, 0, 16, 2);
+  l.position.set(0, -60, 0);
+  cena.add(l);
+  LUZES.push(l);
+}
+let proxLuz = 0;
+
+for (const item of CENARIO) {
+  new GLTFLoader().load(item.f, (gltf) => {
+    let fonte = null;
+    gltf.scene.updateWorldMatrix(true, true);
+    gltf.scene.traverse(o => { if (o.isMesh && !fonte) fonte = o; });
+    if (!fonte) return;
+    const geo = fonte.geometry.clone();
+    geo.applyMatrix4(fonte.matrixWorld);
+    geo.computeBoundingBox();
+    const bb = geo.boundingBox;
+    geo.translate(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2);
+    const base = item.alt / Math.max(bb.max.y - bb.min.y, 0.01);
+    const env = new THREE.Object3D(); env.add(fonte);
+    materialBarato(env);
+
+    const grupo = new THREE.InstancedMesh(geo, fonte.material, item.n);
+    const rnd = semear(item.f.length * 7919 + item.n);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion();
+    const pos = new THREE.Vector3(), esc = new THREE.Vector3();
+    const cima = new THREE.Vector3(0, 1, 0), lado = new THREE.Vector3();
+    for (let i = 0; i < item.n; i++) {
+      const t = rnd();
+      const p = pontoEm(t), d = direcaoEm(t);
+      lado.copy(d).cross(cima).normalize();
+      const s = rnd() < 0.5 ? -1 : 1;
+      const fora = CFG.larguraPista + item.de + rnd() * (item.ate - item.de);
+      pos.set(p.x + lado.x * fora * s, 0, p.z + lado.z * fora * s);
+      const k = base * (0.8 + rnd() * 0.5);
+      q.setFromAxisAngle(cima, rnd() * Math.PI * 2);
+      esc.set(k, k, k);
+      grupo.setMatrixAt(i, m4.compose(pos, q, esc));
+      if (item.f === 'lantern.glb' && proxLuz < LUZES.length && i % 5 === 0) {
+        const l = LUZES[proxLuz++];
+        l.position.set(pos.x, item.alt * 0.8, pos.z);
+        l.intensity = 6;
+      }
+    }
+    grupo.instanceMatrix.needsUpdate = true;
+    grupo.frustumCulled = false;
+    cena.add(grupo);
+  }, undefined, () => {});
+}
+
+// ── start line ────────────────────────────────────────────
+{
+  const p = pontoEm(0), d = direcaoEm(0);
+  const lado = new THREE.Vector3().copy(d).cross(new THREE.Vector3(0, 1, 0)).normalize();
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 32;
+  const c = cv.getContext('2d');
+  for (let x = 0; x < 16; x++) for (let y = 0; y < 2; y++) {
+    c.fillStyle = (x + y) % 2 ? '#1a2238' : '#ffffff';
+    c.fillRect(x * 16, y * 16, 16, 16);
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const meta = new THREE.Mesh(
+    new THREE.PlaneGeometry(CFG.larguraPista * 2, 2.4).rotateX(-Math.PI / 2),
+    new THREE.MeshLambertMaterial({ map: tex }));
+  meta.position.set(p.x, 0.04, p.z);
+  meta.rotation.y = Math.atan2(d.x, d.z);
+  cena.add(meta);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  KARTS
+// ═══════════════════════════════════════════════════════════
+const CORES = [0xe2564f, 0x45c66a, 0xffb45c, 0x5b8cff, 0xc27ee0, 0x4dd6ff];
+const NOMES_BOT = ['Rena', 'Gelo', 'Pinha', 'Sino', 'Estrela'];
+
+function fazerKart(cor, comBoneco) {
+  const g = new THREE.Group();
+  const corpo = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.42, 1.9),
+    new THREE.MeshLambertMaterial({ color: cor }));
+  corpo.position.y = 0.42; g.add(corpo);
+  const nariz = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.28, 0.55),
+    new THREE.MeshLambertMaterial({ color: cor }));
+  nariz.position.set(0, 0.32, -1.05); g.add(nariz);
+  const roda = new THREE.CylinderGeometry(0.33, 0.33, 0.26, 14).rotateZ(Math.PI / 2);
+  const matRoda = new THREE.MeshLambertMaterial({ color: 0x1b2436 });
+  for (const [x, z] of [[-0.66, -0.68], [0.66, -0.68], [-0.7, 0.72], [0.7, 0.72]]) {
+    const r = new THREE.Mesh(roda, matRoda);
+    r.position.set(x, 0.33, z); g.add(r);
+  }
+  // A hat, because it is Christmas and because it makes the karts tellable
+  // apart at a glance from behind, which is when it matters.
+  const gorro = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.62, 14),
+    new THREE.MeshLambertMaterial({ color: 0xe2564f }));
+  gorro.position.set(0, 1.34, 0.25); g.add(gorro);
+  const pompom = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8),
+    new THREE.MeshLambertMaterial({ color: 0xffffff }));
+  pompom.position.set(0, 1.68, 0.25); g.add(pompom);
+  if (comBoneco) {
+    const cabeca = new THREE.Mesh(new THREE.SphereGeometry(0.26, 14, 10),
+      new THREE.MeshLambertMaterial({ color: 0xffe9c9 }));
+    cabeca.position.set(0, 1.06, 0.25); g.add(cabeca);
+  }
+  cena.add(g);
+  return g;
+}
+
+const karts = [];
+for (let i = 0; i < CFG.nKarts; i++) {
+  const eJogador = i === 0;
+  karts.push({
+    i, eJogador,
+    nome: eJogador ? 'Tu' : NOMES_BOT[i - 1],
+    cor: CORES[i],
+    grupo: fazerKart(CORES[i], !eJogador),
+    pos: new THREE.Vector3(),
+    vel: 0, rumo: 0,
+    voltas: 0, progresso: 0, progressoAnt: 0, percorrido: 0,
+    atordoado: 0, posicao: i + 1,
+    velAlvo: eJogador ? 0 : CFG.velBot[i - 1]
+  });
+}
+
+function porNaGrelha() {
+  const cima = new THREE.Vector3(0, 1, 0), lado = new THREE.Vector3();
+  karts.forEach((k, i) => {
+    const t = (1 - (0.004 + Math.floor(i / 2) * 0.006)) % 1;
+    const p = pontoEm(t), d = direcaoEm(t);
+    lado.copy(d).cross(cima).normalize();
+    const s = i % 2 ? 1 : -1;
+    k.pos.set(p.x + lado.x * s * 2.6, 0, p.z + lado.z * s * 2.6);
+    k.rumo = Math.atan2(d.x, d.z);
+    k.vel = 0; k.voltas = 0; k.atordoado = 0;
+    k.progresso = t; k.progressoAnt = t; k.percorrido = 0;
+    k.grupo.position.copy(k.pos);
+    k.grupo.rotation.set(0, k.rumo, 0);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  THE IMAGINARY WHEEL
+//  Read as the angle of the line joining the two hands. Relative, so it
+//  needs no calibration and cannot drift: whatever the headset thinks the
+//  absolute positions are, the angle between them is the same.
+// ═══════════════════════════════════════════════════════════
+const maos = [];
+for (let i = 0; i < 2; i++) {
+  const mao = render.xr.getHand(i);
+  cena.add(mao);
+  maos.push({ mao, activa: false, pos: new THREE.Vector3(),
+              posAnt: new THREE.Vector3(), parado: 0, temAnt: false });
+}
+
+const volante = new THREE.Group();
+{
+  const aro = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.022, 10, 36),
+    new THREE.MeshBasicMaterial({ color: 0x9fc0ff, transparent: true, opacity: 0.65 }));
+  volante.add(aro);
+  for (let i = 0; i < 3; i++) {
+    const raio = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.012, 0.012),
+      new THREE.MeshBasicMaterial({ color: 0x9fc0ff, transparent: true, opacity: 0.5 }));
+    raio.rotation.z = i * Math.PI * 2 / 3;
+    raio.position.set(Math.cos(i * Math.PI * 2 / 3) * 0.09, Math.sin(i * Math.PI * 2 / 3) * 0.09, 0);
+    volante.add(raio);
+  }
+  const centro = new THREE.Mesh(new THREE.CircleGeometry(0.05, 20),
+    new THREE.MeshBasicMaterial({ color: 0xffb45c, transparent: true, opacity: 0.55 }));
+  volante.add(centro);
+  volante.visible = false;
+  cena.add(volante);
+}
+
+const cmd = { direcao: 0, acelerador: 0, agarrado: false, buzina: false };
+let distNeutra = 0.42, zNeutro = -0.42, agarradoDesde = 0;
+const camPos = new THREE.Vector3(), camQuat = new THREE.Quaternion(), camInv = new THREE.Quaternion();
+const rel0 = new THREE.Vector3(), rel1 = new THREE.Vector3(), meio = new THREE.Vector3();
+let recarga = 0;
+
+function lerMaos(dt, t) {
+  const [a, b] = maos;
+  if (!a.activa || !b.activa) {
+    // Hands down: the kart coasts. Better than cutting the throttle dead,
+    // which would punish a moment of lost tracking with a dead stop.
+    cmd.agarrado = false;
+    cmd.acelerador *= Math.pow(0.25, dt);
+    cmd.direcao *= Math.pow(0.08, dt);
+    volante.visible = false;
+    return;
+  }
+  camInv.copy(camQuat).invert();
+  rel0.copy(a.pos).sub(camPos).applyQuaternion(camInv);
+  rel1.copy(b.pos).sub(camPos).applyQuaternion(camInv);
+  // Left hand is whichever is further left, not whichever the runtime
+  // happens to have numbered first.
+  const esq = rel0.x <= rel1.x ? rel0 : rel1;
+  const dir = rel0.x <= rel1.x ? rel1 : rel0;
+
+  const separacao = esq.distanceTo(dir);
+  meio.copy(esq).add(dir).multiplyScalar(0.5);
+
+  // Too close together, too far apart, or behind you: not a wheel.
+  const plausivel = separacao > 0.16 && separacao < 0.95 && meio.z < -0.12;
+  if (!plausivel) {
+    if (separacao < 0.16 && cmd.agarrado && t - agarradoDesde > 500) cmd.buzina = true;
+    cmd.agarrado = false;
+    volante.visible = false;
+    return;
+  }
+  if (!cmd.agarrado) {
+    cmd.agarrado = true; agarradoDesde = t;
+    distNeutra = separacao;
+    zNeutro = meio.z;
+  }
+
+  // Steering: the tilt of the line between the hands. Left hand rising
+  // turns left, exactly as a real wheel does.
+  const ang = Math.atan2(esq.y - dir.y, dir.x - esq.x);
+  cmd.direcao = THREE.MathUtils.clamp(ang / 0.8, -1, 1);
+
+  // Throttle: push the wheel away to go, pull it in to brake. Measured
+  // against wherever the wheel was first taken hold of, so tall and short
+  // players both start from neutral.
+  const empurrado = (zNeutro - meio.z) / 0.16;
+  cmd.acelerador = THREE.MathUtils.clamp(empurrado, -1, 1);
+
+  volante.visible = true;
+  volante.position.copy(meio).applyQuaternion(camQuat).add(camPos);
+  volante.quaternion.copy(camQuat);
+  volante.rotateZ(-cmd.direcao * 0.8);
+}
+
+function actualizarMao(m, dt) {
+  const juntas = m.mao.joints;
+  const pulso = juntas && juntas['wrist'];
+  if (!pulso) { m.activa = false; return; }
+  pulso.getWorldPosition(tmpV);
+  // A pose repeated bit for bit is a hand the cameras have lost, not a
+  // hand being held still. The runtime keeps reporting it as visible.
+  if (m.temAnt && tmpV.distanceToSquared(m.posAnt) < 1e-12) {
+    m.parado++;
+    if (m.parado > 6) m.activa = false;
+  } else { m.parado = 0; m.activa = true; }
+  m.pos.copy(tmpV); m.posAnt.copy(tmpV); m.temAnt = true;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SNOWBALLS
+// ═══════════════════════════════════════════════════════════
+const bolas = [];
+const geoBola = new THREE.SphereGeometry(CFG.raioBola, 14, 10);
+const matBola = new THREE.MeshLambertMaterial({ color: 0xffffff,
+  emissive: 0x9fd0ff, emissiveIntensity: 0.35 });
+const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), frente = new THREE.Vector3();
+
+// The kart being looked at. Same idea as the snowball game: the head is
+// the precise channel, so it decides the target.
+function kartOlhado() {
+  camara.getWorldDirection(frente); frente.normalize();
+  let melhor = null, menor = 0.30;
+  for (const k of karts) {
+    if (k.eJogador) continue;
+    tmpV.copy(k.pos); tmpV.y = 0.8; tmpV.sub(camPos);
+    const d = tmpV.length();
+    if (d < 2 || d > 60) continue;
+    const ang = Math.acos(THREE.MathUtils.clamp(tmpV.normalize().dot(frente), -1, 1));
+    if (ang < menor) { menor = ang; melhor = k; }
+  }
+  return melhor;
+}
+
+function atirarBola() {
+  const alvo = kartOlhado();
+  const m = new THREE.Mesh(geoBola, matBola);
+  m.position.copy(camPos).addScaledVector(frente, 0.6);
+  cena.add(m);
+  const v = new THREE.Vector3();
+  if (alvo) {
+    // Lead the target: throwing at where a kart is, rather than where it
+    // will be, misses almost every time at these speeds.
+    const dist = alvo.pos.distanceTo(camPos);
+    const adiante = dist / CFG.velBola;
+    tmpV.set(Math.sin(alvo.rumo), 0, Math.cos(alvo.rumo)).multiplyScalar(alvo.vel * adiante);
+    v.copy(alvo.pos).add(tmpV); v.y = 0.75;
+    v.sub(m.position).normalize().multiplyScalar(CFG.velBola);
+  } else {
+    v.copy(frente).multiplyScalar(CFG.velBola);
+  }
+  bolas.push({ m, v, nasceu: performance.now() });
+  somBola();
+}
+
+function moverBolas(dt, agora) {
+  for (let i = bolas.length - 1; i >= 0; i--) {
+    const b = bolas[i];
+    b.v.y -= 5.5 * dt;
+    b.m.position.addScaledVector(b.v, dt);
+    let fim = false;
+    for (const k of karts) {
+      if (k.eJogador) continue;
+      tmpV.copy(k.pos); tmpV.y = 0.7;
+      if (b.m.position.distanceTo(tmpV) < 1.5) {
+        k.atordoado = CFG.atordoado;
+        k.vel *= 0.35;
+        fim = true; somAcerto();
+        break;
+      }
+    }
+    if (fim || b.m.position.y < 0.1 || agora - b.nasceu > 3000) {
+      cena.remove(b.m); bolas.splice(i, 1);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  DRIVING
+// ═══════════════════════════════════════════════════════════
+function moverKart(k, dt) {
+  if (k.atordoado > 0) {
+    k.atordoado -= dt;
+    k.rumo += dt * 9;                     // spinning out
+    k.vel *= Math.pow(0.4, dt);
+  } else if (k.eJogador) {
+    const alvo = cmd.acelerador > 0 ? cmd.acelerador * CFG.velMax : 0;
+    if (cmd.acelerador > 0) k.vel += (alvo - k.vel) * CFG.aceleracao * dt / CFG.velMax * 6;
+    else if (cmd.acelerador < 0) k.vel += cmd.acelerador * CFG.travagem * dt;
+    k.vel -= CFG.atrito * dt * (cmd.acelerador > 0 ? 0.2 : 1);
+    k.vel = Math.max(k.vel, 0);
+    // Steering bites with speed, so the kart is not twitchy from a stop.
+    k.rumo -= cmd.direcao * CFG.viragem * dt * Math.min(k.vel / 6, 1.1);
+  } else {
+    conduzirBot(k, dt);
+  }
+
+  const sobre = progressoDe(k.pos);
+  const fora = sobre.desvio > CFG.larguraPista;
+  if (fora) k.vel *= Math.pow(CFG.foraDaPista, dt);
+
+  k.pos.x += Math.sin(k.rumo) * k.vel * dt;
+  k.pos.z += Math.cos(k.rumo) * k.vel * dt;
+
+  // Lap bookkeeping: a jump from near the end of the lap back to the start
+  // is a crossing, not a teleport.
+  const t = progressoDe(k.pos).t;
+  if (k.progressoAnt > 0.8 && t < 0.2) k.voltas++;
+  else if (k.progressoAnt < 0.2 && t > 0.8 && k.voltas > 0) k.voltas--;
+  k.progressoAnt = t; k.progresso = t;
+  k.percorrido = k.voltas + t;
+
+  k.grupo.position.copy(k.pos);
+  k.grupo.rotation.y = k.rumo;
+  // A little lean into the corner. Cheap, and it is what makes a box on
+  // wheels look like it is being driven.
+  const alvoIncl = k.eJogador ? -cmd.direcao * 0.12 : 0;
+  k.grupo.rotation.z += (alvoIncl - k.grupo.rotation.z) * Math.min(dt * 6, 1);
+}
+
+function conduzirBot(k, dt) {
+  // Aim at a point up the road, not at the road under the wheels: looking
+  // ahead is the whole of it, and the distance ahead scales with speed so
+  // fast bots take corners wide instead of scraping the apex.
+  const olhar = 0.012 + k.vel * 0.0016;
+  const alvo = pontoEm(k.progresso + olhar);
+  const desejado = Math.atan2(alvo.x - k.pos.x, alvo.z - k.pos.z);
+  let erro = ((desejado - k.rumo + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  k.rumo += THREE.MathUtils.clamp(erro, -1, 1) * CFG.viragem * dt * 1.4;
+
+  // Slow for the corner: the sharper the bend ahead, the less throttle.
+  const d1 = direcaoEm(k.progresso + 0.01), d2 = direcaoEm(k.progresso + 0.05);
+  const curvatura = 1 - THREE.MathUtils.clamp(d1.dot(d2), 0, 1);
+  const alvoVel = k.velAlvo * (1 - Math.min(curvatura * 3.2, 0.45));
+  k.vel += (alvoVel - k.vel) * Math.min(dt * 1.9, 1);
+}
+
+// ── standings ─────────────────────────────────────────────
+function ordenar() {
+  const lista = [...karts].sort((a, b) => b.percorrido - a.percorrido);
+  lista.forEach((k, i) => { k.posicao = i + 1; });
+  return lista;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SOUND
+// ═══════════════════════════════════════════════════════════
+let actx = null, motor = null, ganhoMotor = null;
+function arrancarSom() {
+  if (actx) return;
+  try {
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    motor = actx.createOscillator();
+    ganhoMotor = actx.createGain();
+    motor.type = 'sawtooth';
+    motor.frequency.value = 70;
+    ganhoMotor.gain.value = 0;
+    const filtro = actx.createBiquadFilter();
+    filtro.type = 'lowpass'; filtro.frequency.value = 700;
+    motor.connect(filtro); filtro.connect(ganhoMotor); ganhoMotor.connect(actx.destination);
+    motor.start();
+  } catch (e) { actx = null; }
+}
+function tocar(freq, tipo, dur, vol) {
+  if (!actx) return;
+  try {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = tipo; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+    o.connect(g); g.connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + dur);
+  } catch (e) {}
+}
+const somBola = () => tocar(300, 'triangle', 0.16, 0.18);
+const somAcerto = () => { tocar(140, 'square', 0.3, 0.2); tocar(90, 'sawtooth', 0.4, 0.15); };
+const somVolta = () => { tocar(660, 'triangle', 0.18, 0.2); setTimeout(() => tocar(880, 'triangle', 0.3, 0.2), 140); };
+
+// ═══════════════════════════════════════════════════════════
+//  PANEL
+// ═══════════════════════════════════════════════════════════
+function fazerPainel(l, a, pxL, pxA) {
+  const cv = document.createElement('canvas');
+  cv.width = pxL; cv.height = pxA;
+  const ctx = cv.getContext('2d');
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const malha = new THREE.Mesh(new THREE.PlaneGeometry(l, a),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false }));
+  malha.renderOrder = 900;
+  cena.add(malha);
+  return { ctx, tex, malha, pxL, pxA };
+}
+const painel = fazerPainel(0.78, 0.46, 780, 460);
+
+let estadoJogo = 'contagem';      // contagem → a correr → fim
+let contagem = 4.0, tempo = 0, melhorVolta = 0, inicioVolta = 0;
+let nomeJogador = 'Tu';
+
+function desenharPainel() {
+  const { ctx, tex, pxL, pxA } = painel;
+  ctx.clearRect(0, 0, pxL, pxA);
+  ctx.fillStyle = 'rgba(10,16,28,0.82)';
+  ctx.beginPath(); ctx.roundRect(0, 0, pxL, pxA, 22); ctx.fill();
+  ctx.strokeStyle = '#2a3a5c'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.roundRect(4, 4, pxL - 8, pxA - 8, 19); ctx.stroke();
+
+  const eu = karts[0];
+  ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+
+  ctx.fillStyle = '#eef3ff';
+  ctx.font = 'bold 74px -apple-system, system-ui, sans-serif';
+  ctx.fillText(`${eu.posicao}\u00ba`, 28, 20);
+  ctx.fillStyle = '#7d879e';
+  ctx.font = '28px ui-monospace, Menlo, monospace';
+  ctx.fillText(`de ${CFG.nKarts}`, 132, 62);
+
+  ctx.fillStyle = '#eef3ff';
+  ctx.font = 'bold 42px -apple-system, system-ui, sans-serif';
+  ctx.fillText(`volta ${Math.min(eu.voltas + 1, CFG.voltas)}/${CFG.voltas}`, 28, 118);
+
+  ctx.fillStyle = '#5ce39a';
+  ctx.font = 'bold 56px -apple-system, system-ui, sans-serif';
+  ctx.fillText(`${Math.round(eu.vel * 3.6)}`, 28, 178);
+  ctx.fillStyle = '#4a5468';
+  ctx.font = '26px ui-monospace, Menlo, monospace';
+  ctx.fillText('km/h', 118, 208);
+
+  // The standings, because half the fun of a race is knowing who is next.
+  const lista = ordenar();
+  ctx.font = '26px ui-monospace, Menlo, monospace';
+  let y = 250;
+  for (const k of lista) {
+    ctx.fillStyle = k.eJogador ? '#ffb45c' : '#5d6a86';
+    ctx.fillText(`${k.posicao}. ${k.nome}`, 28, y);
+    y += 34;
+  }
+
+  if (estadoJogo === 'contagem') {
+    ctx.fillStyle = 'rgba(10,16,28,0.92)';
+    ctx.beginPath(); ctx.roundRect(0, 0, pxL, pxA, 22); ctx.fill();
+    ctx.textAlign = 'center';
+    const n = Math.ceil(contagem);
+    ctx.fillStyle = n > 1 ? '#ffb45c' : '#5ce39a';
+    ctx.font = 'bold 180px -apple-system, system-ui, sans-serif';
+    ctx.fillText(n > 0 ? String(Math.min(n, 3)) : 'J\u00c1!', pxL / 2, 120);
+    ctx.fillStyle = '#7d879e';
+    ctx.font = '30px -apple-system, system-ui, sans-serif';
+    ctx.fillText('agarra o volante', pxL / 2, 360);
+  } else if (estadoJogo === 'fim') {
+    ctx.fillStyle = 'rgba(10,16,28,0.94)';
+    ctx.beginPath(); ctx.roundRect(0, 0, pxL, pxA, 22); ctx.fill();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffb45c';
+    ctx.font = 'bold 110px -apple-system, system-ui, sans-serif';
+    ctx.fillText(`${eu.posicao}\u00ba lugar`, pxL / 2, 110);
+    ctx.fillStyle = '#7d879e';
+    ctx.font = '32px -apple-system, system-ui, sans-serif';
+    ctx.fillText(`melhor volta ${melhorVolta.toFixed(1)} s`, pxL / 2, 260);
+    ctx.fillText('junta as m\u00e3os para recome\u00e7ar', pxL / 2, 330);
+  } else if (!cmd.agarrado) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffb45c';
+    ctx.font = 'bold 34px -apple-system, system-ui, sans-serif';
+    ctx.fillText('m\u00e3os ao volante', pxL / 2, 400);
+  }
+
+  tex.needsUpdate = true;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  FRAME
+// ═══════════════════════════════════════════════════════════
+let ultimo = 0, t0 = 0, contaPainel = 0;
+const alvoCamara = new THREE.Vector3();
+
+function frame() {
+  const agora = performance.now();
+  const dt = Math.min((agora - ultimo) / 1000, 0.05);
+  ultimo = agora;
+  const t = agora - t0;
+
+  cena.updateMatrixWorld(true);
+  const cam = render.xr.getCamera();
+  cam.getWorldPosition(camPos);
+  cam.getWorldQuaternion(camQuat);
+  camara.quaternion.copy(camQuat);
+
+  for (const m of maos) actualizarMao(m, dt);
+  cmd.buzina = false;
+  lerMaos(dt, t);
+
+  if (estadoJogo === 'contagem') {
+    contagem -= dt;
+    if (contagem <= 0) { estadoJogo = 'a correr'; inicioVolta = t; somVolta(); }
+  } else if (estadoJogo === 'a correr') {
+    tempo += dt;
+    const voltasAntes = karts[0].voltas;
+    for (const k of karts) moverKart(k, dt);
+    if (karts[0].voltas > voltasAntes) {
+      const v = (t - inicioVolta) / 1000;
+      if (!melhorVolta || v < melhorVolta) melhorVolta = v;
+      inicioVolta = t; somVolta();
+    }
+    if (karts[0].voltas >= CFG.voltas) { estadoJogo = 'fim'; ordenar(); }
+
+    if (cmd.buzina && recarga <= 0) { atirarBola(); recarga = CFG.recargaBola; }
+    recarga -= dt;
+  } else if (estadoJogo === 'fim') {
+    for (const k of karts) if (!k.eJogador) moverKart(k, dt);
+    if (cmd.buzina) reiniciar(t);
+  }
+
+  moverBolas(dt, agora);
+
+  // The camera rides the kart: behind and above, easing into place so a
+  // bump does not throw the player's head about. The kart's own heading
+  // drives it, never the player's head, or looking sideways would steer.
+  const eu = karts[0];
+  const atras = 0.0;
+  alvoCamara.set(eu.pos.x - Math.sin(eu.rumo) * atras, 0, eu.pos.z - Math.cos(eu.rumo) * atras);
+  eu.grupo.visible = false;             // you are sitting in it
+  cena.position.set(-alvoCamara.x, 0, -alvoCamara.z);
+  cena.rotation.y = 0;
+
+  // Engine note follows speed.
+  if (actx && motor) {
+    motor.frequency.value = 62 + eu.vel * 7.5;
+    ganhoMotor.gain.value = estadoJogo === 'a correr' ? 0.035 + eu.vel * 0.0032 : 0.01;
+  }
+
+  // Snow follows the player so it is always around them.
+  neve.position.set(alvoCamara.x, 0, alvoCamara.z);
+  const sp = neve.geometry.attributes.position;
+  for (let i = 0; i < NEVE; i++) {
+    let y = sp.getY(i) - dt * (2.2 + (i % 7) * 0.3);
+    if (y < 0) y += 26;
+    sp.setY(i, y);
+  }
+  sp.needsUpdate = true;
+
+  painel.malha.position.copy(camPos);
+  painel.malha.quaternion.copy(camQuat);
+  painel.malha.translateX(-0.42);
+  painel.malha.translateY(-0.10);
+  painel.malha.translateZ(-1.0);
+
+  contaPainel += dt;
+  if (contaPainel > 0.08) { contaPainel = 0; desenharPainel(); }
+
+  render.render(cena, camara);
+}
+
+function reiniciar(t) {
+  porNaGrelha();
+  estadoJogo = 'contagem'; contagem = 4.0; tempo = 0;
+  melhorVolta = 0; inicioVolta = t;
+  for (const b of bolas) cena.remove(b.m);
+  bolas.length = 0;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SESSION
+// ═══════════════════════════════════════════════════════════
+entrarBt.addEventListener('click', async () => {
+  if (!xrOk) return;
+  entrarBt.disabled = true;
+  nomeJogador = ($('nome').value || '').trim().slice(0, 14) || 'Tu';
+  karts[0].nome = nomeJogador;
+  arrancarSom();
+  try {
+    const sessao = await navigator.xr.requestSession('immersive-vr',
+      { optionalFeatures: ['local-floor', 'hand-tracking'] });
+    render.xr.setReferenceSpaceType('local-floor');
+    await render.xr.setSession(sessao);
+    t0 = performance.now(); ultimo = t0;
+    porNaGrelha();
+    estadoJogo = 'contagem'; contagem = 4.0;
+    render.setAnimationLoop(frame);
+    estadoEl.textContent = 'A correr.';
+    sessao.addEventListener('end', () => {
+      render.setAnimationLoop(null);
+      entrarBt.disabled = false;
+      entrarBt.textContent = 'Correr outra vez';
+      estadoEl.textContent =
+        `Terminaste em ${karts[0].posicao}\u00ba lugar` +
+        (melhorVolta ? `, melhor volta ${melhorVolta.toFixed(1)} s.` : '.');
+    });
+  } catch (e) {
+    entrarBt.disabled = false;
+    estadoEl.textContent = 'Não foi possível entrar: ' + e.message;
+  }
+});
+</script>
+</body>
+</html>
