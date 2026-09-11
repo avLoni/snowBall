@@ -170,7 +170,10 @@ const AJUSTE = {
   // the moment it came back. The ball was leaving late, and the blind time
   // I was measuring was inflated by the wait.
   passoRegresso: 0.02,    // metres in one frame: the hand is moving again
-  extMinima: 0.42,        // and the arm is out, not fidgeting by the head
+  // Was 0.42, and two throws in nine measured exactly 0.41 — rejected by
+  // a centimetre, with no ball and no explanation. Rejections are now
+  // counted, so a silent one cannot happen again.
+  extMinima: 0.34,        // and the arm is out, not fidgeting by the head
   esperaMax: 1400,        // after this, it was not a throw
 
   // ── WHERE THE FORCE COMES FROM ─────────────────────────
@@ -192,7 +195,24 @@ const AJUSTE = {
   //   hard   9° to 19°        (0.151, 0.240, 0.273, 0.339)
   // A wave scored 0.002 and the two fake throws 0.043 and 0.051 — a
   // gesture that is not a throw does not tilt the head.
-  inclinaSuave: 0.03, inclinaForte: 0.26,
+  // Calibrated to what a person actually does WHILE PLAYING, not to what
+  // they do when told to throw soft and hard. Asked to modulate, the tilt
+  // ranged from 2° to 25°; left to play, twenty-two throws fell between
+  // 6.6° and 11.2°. Mapping the wide range onto the game meant the narrow
+  // one landed everything within three metres of itself.
+  //
+  // This is not cheating. Every controller is calibrated to the range of
+  // movement a hand actually produces; a stick that needed more travel
+  // than a thumb has would simply be a bad stick.
+  inclinaSuave: 0.087, inclinaForte: 0.209,   // 5° to 12°
+
+  // ── AIM ASSIST ─────────────────────────────────────────
+  // Direction comes from the head and is precise; force comes from the
+  // body and is not. So the range is nudged towards whatever the player is
+  // looking at, but only partway: enough to forgive the force, not enough
+  // to throw the ball for them. The gesture still has to be roughly right.
+  ajudaMax: 0.30,        // at most 30% of the way to the looked-at target
+  ajudaAngulo: 0.22,     // radians: how close the gaze must be to count
 
   // Recomputed WITH the launch height. The old numbers used the textbook
   // range formula, which assumes the ball starts and lands at the same
@@ -241,7 +261,11 @@ const alvos = [];
     const a = (i - (distancias.length - 1) / 2) * 0.28;
     g.position.set(Math.sin(a) * d, 0, -Math.cos(a) * d);
     cena.add(g);
-    alvos.push({ grupo: g, raio: 0.55, vivo: true, dist: d, respawn: 0 });
+    // The real shape, not one sphere standing in for three. A ball
+    // striking the side of the base used to land 0.64 m from the single
+    // hit-centre and miss, while visibly hitting the snowman.
+    alvos.push({ grupo: g, vivo: true, dist: d, respawn: 0,
+                 partes: [{ y: 0.42, r: 0.42 }, { y: 0.95, r: 0.30 }, { y: 1.38, r: 0.22 }] });
   });
 }
 
@@ -291,7 +315,7 @@ function fazerPainel(l, a, pxL, pxA) {
 const painel = fazerPainel(1.3, 0.5, 1040, 400);
 let painelPosto = false;
 
-let pontos = 0, acertos = 0, lancamentos = 0, relogio = 0;
+let pontos = 0, acertos = 0, lancamentos = 0, relogio = 0, recusados = 0;
 let forcaViva = 0;      // what the meter is showing right now
 
 function desenharPainel() {
@@ -308,7 +332,7 @@ function desenharPainel() {
   ctx.fillText(String(pontos), 32, 26);
   ctx.fillStyle = '#4a5468';
   ctx.font = '26px ui-monospace, Menlo, monospace';
-  ctx.fillText(`${acertos} de ${lancamentos}`, 34, 112);
+  ctx.fillText(`${acertos} de ${lancamentos}` + (recusados ? `  · ${recusados} recusados` : ''), 34, 112);
 
   const msg = estado === 'espera' ? 'leva a mão à bola'
             : estado === 'namao' ? 'atira por cima do ombro'
@@ -412,11 +436,23 @@ function porBola() {
   estado = 'espera';
 }
 
-let ultimaExt = 0, ultimoCego = 0;
+let ultimaExt = 0, ultimoCego = 0, ultimaAjuda = 0;
 
 function forcaDe(inclina) {
   const k = (inclina - AJUSTE.inclinaSuave) / (AJUSTE.inclinaForte - AJUSTE.inclinaSuave);
   return THREE.MathUtils.clamp(k, 0, 1);
+}
+
+// The launch speed that would land a ball at a given distance — the
+// inverse of the range formula, found by bisection because there is no
+// tidy closed form once launch height is in play.
+function velocidadeParaAlcance(alcance) {
+  let lo = 2, hi = 25;
+  for (let i = 0; i < 40; i++) {
+    const m = (lo + hi) / 2;
+    if (alcanceDe(m) < alcance) lo = m; else hi = m;
+  }
+  return (lo + hi) / 2;
 }
 
 // Proper ballistics: the ball leaves above the ground, so it flies further
@@ -428,6 +464,24 @@ function alcanceDe(v) {
 }
 
 const camInv = new THREE.Quaternion();
+let ladoDoBraco = 1;    // +1 right-handed, −1 left; set when the ball is taken
+
+// The target the player is looking at, if any is close enough to the line
+// of sight to be a plausible intention.
+function alvoOlhado() {
+  camara.getWorldDirection(frente); frente.normalize();
+  let melhor = null, menorAng = AJUSTE.ajudaAngulo;
+  for (const a of alvos) {
+    if (!a.vivo) continue;
+    tmp.copy(a.grupo.position); tmp.y = 0.95;
+    tmp.sub(camPos);
+    const dist = tmp.length();
+    if (dist < 0.5) continue;
+    const ang = Math.acos(THREE.MathUtils.clamp(tmp.normalize().dot(frente), -1, 1));
+    if (ang < menorAng) { menorAng = ang; melhor = a; }
+  }
+  return melhor;
+}
 
 function lancar(forca, desdeMao) {
   // Direction comes from the head, not from the hand. The hand's last
@@ -439,21 +493,44 @@ function lancar(forca, desdeMao) {
   const lado = tmp.set(0, 1, 0).cross(frente).normalize();
   const dir = frente.clone().applyAxisAngle(lado, -AJUSTE.loft).normalize();
 
-  const vel = AJUSTE.velFraca + (AJUSTE.velForte - AJUSTE.velFraca) * forca;
+  let vel = AJUSTE.velFraca + (AJUSTE.velForte - AJUSTE.velFraca) * forca;
+
+  // Pull the range part of the way towards the snowman being looked at.
+  // The throw still has to be in the right neighbourhood — a soft toss
+  // will not reach the far one however hard you stare.
+  const alvo = alvoOlhado();
+  let ajudou = 0;
+  if (alvo) {
+    const querido = velocidadeParaAlcance(alvo.grupo.position.length());
+    ajudou = (querido - vel) * AJUSTE.ajudaMax;
+    vel += ajudou;
+  }
   const m = new THREE.Mesh(geoVoo, matVoo);
-  // From the hand that just came through, when we have it.
-  if (desdeMao) m.position.copy(desdeMao);
-  else { m.position.copy(camPos).addScaledVector(frente, 0.35); m.position.y -= 0.12; }
+  // NOT from where the hand was found. That instant is late in the
+  // follow-through: measured over a session, the hand sits anywhere from
+  // 1.40 m down to 0.98 m off the floor — waist height — and once eight
+  // centimetres BEHIND the face. Balls flew out sideways and from the hip.
+  //
+  // The release happened earlier, in front and on the throwing side. That
+  // point is not observable, so it is reconstructed: shoulder height,
+  // forward, offset towards whichever hand threw.
+  const lateral = tmp.set(0, 1, 0).cross(frente).normalize();
+  m.position.copy(camPos)
+    .addScaledVector(frente, 0.45)
+    .addScaledVector(lateral, ladoDoBraco * 0.18);
+  m.position.y = camPos.y - 0.18;
   cena.add(m);
-  voando.push({ m, v: dir.multiplyScalar(vel), nasceu: performance.now(), atingiu: false });
+  voando.push({ m, v: dir.multiplyScalar(vel), nasceu: performance.now(),
+                anterior: m.position.clone(), atingiu: false });
   lancamentos++;
 
   const alcance = alcanceDe(vel);
+  ultimaAjuda = ajudou;
   registo.push({ n: lancamentos, dur: Math.round(tPerdeu - tAgarrou),
                  cego: Math.round(ultimoCego), ext: ultimaExt,
                  velCega: ultimaExt / (ultimoCego / 1000),
                  cabeca: picoCabeca, cabAng: picoAngular, balanco: balancoCabeca,
-                 inclina: inclinaCabeca,
+                 inclina: inclinaCabeca, ajuda: ultimaAjuda,
                  amp: posPerdeu.distanceTo(posAgarrou), forca, alcance, resultado: '—' });
   desenharTabela();
 }
@@ -511,6 +588,11 @@ function passoDoArremesso(t) {
         estado = 'namao'; maoActiva = m;
         tAgarrou = t; posAgarrou.copy(m.pos);
         picoCabeca = 0; picoAngular = 0; balancoCabeca = 0; inclinaCabeca = 0;
+        // Which side the throw comes from, read from the hand itself
+        // rather than assumed — a left-hander should not have the ball
+        // appearing off their right shoulder.
+        tmp.copy(m.pos).sub(camPos).applyQuaternion(camInv);
+        ladoDoBraco = tmp.x >= 0 ? 1 : -1;
         angAoAgarrar.setFromQuaternion(camQuat, 'YXZ');
         bola.visible = halo.visible = false;
         return;
@@ -540,6 +622,7 @@ function passoDoArremesso(t) {
       tPerdeu = t; posPerdeu.copy(m.pos);
       const amp = posPerdeu.distanceTo(posAgarrou);
       if (amp < AJUSTE.ampMinima) {   // a twitch, not a throw
+        recusados++;
         estado = 'espera'; porBola(); return;
       }
       // Nothing to compute yet: the number that matters is how long this
@@ -578,6 +661,7 @@ function passoDoArremesso(t) {
       }
       // The hand is back but tucked in near the head: they wound up and
       // stopped. Not a throw.
+      recusados++;
       estado = 'espera'; porBola(); return;
     }
     if (t - tPerdeu > AJUSTE.esperaMax) { estado = 'espera'; porBola(); }
@@ -585,15 +669,37 @@ function passoDoArremesso(t) {
 }
 
 // ── flight and hits ───────────────────────────────────────
+const P1 = new THREE.Vector3(), P2 = new THREE.Vector3(), C = new THREE.Vector3();
+
+// Swept against each of the snowman's three spheres. Swept, because at
+// twelve metres a second the ball advances twenty centimetres between
+// frames and can step straight over a shoulder without ever being tested
+// inside it.
+function acertou(b, a) {
+  P1.copy(b.anterior); P2.copy(b.m.position);
+  const raioBola = 0.07;
+  for (const p of a.partes) {
+    C.set(a.grupo.position.x, p.y, a.grupo.position.z);
+    const alcance = p.r + raioBola;
+    // closest approach of the segment P1P2 to the sphere centre
+    tmp.copy(P2).sub(P1);
+    const comp = tmp.lengthSq();
+    let t = comp > 1e-9 ? C.clone().sub(P1).dot(tmp) / comp : 0;
+    t = THREE.MathUtils.clamp(t, 0, 1);
+    tmp.multiplyScalar(t).add(P1);
+    if (tmp.distanceTo(C) < alcance) return true;
+  }
+  return false;
+}
 function moverBolas(dt, t) {
   for (let i = voando.length - 1; i >= 0; i--) {
     const b = voando[i];
+    b.anterior.copy(b.m.position);
     b.v.y -= 9.81 * dt;
     b.m.position.addScaledVector(b.v, dt);
     for (const a of alvos) {
       if (!a.vivo) continue;
-      tmp.copy(a.grupo.position); tmp.y = 0.9;
-      if (b.m.position.distanceTo(tmp) < a.raio) {
+      if (acertou(b, a)) {
         a.vivo = false; a.grupo.visible = false; a.respawn = t + 2000;
         acertos++;
         pontos += Math.round(a.dist * 10);
@@ -655,9 +761,12 @@ function frame() {
   moverBolas(dt, t);
 
   if (!painelPosto && camPos.lengthSq() > 0) {
+    // Up and out of the way. At eye height it sat squarely in front of the
+    // furthest snowman, which is the one hardest to reach and the one you
+    // most need to see.
     frente.set(0, 0, -1).applyQuaternion(camQuat); frente.y = 0; frente.normalize();
-    painel.malha.position.set(camPos.x + frente.x * 2.2 - frente.z * 1.5, 1.5,
-                              camPos.z + frente.z * 2.2 + frente.x * 1.5);
+    painel.malha.position.set(camPos.x + frente.x * 2.4 - frente.z * 1.7, 2.45,
+                              camPos.z + frente.z * 2.4 + frente.x * 1.7);
     painelPosto = true;
   }
   painel.malha.lookAt(camPos.x, camPos.y, camPos.z);
@@ -698,10 +807,10 @@ entrarBt.addEventListener('click', async () => {
 
 $('enviar').addEventListener('click', async () => {
   if (!registo.length) { estadoEl.textContent = 'Ainda não há lançamentos.'; return; }
-  const csv = ['n,inclina_rad,inclina_graus,forca,balanco_rad,cego_ms,extensao_m,vel_cega,cabeca_ms,cabeca_ang,alcance_m,resultado']
+  const csv = ['n,inclina_rad,inclina_graus,forca,ajuda_ms,balanco_rad,cego_ms,extensao_m,vel_cega,cabeca_ms,cabeca_ang,alcance_m,resultado']
     .concat(registo.map(r =>
       `${r.n},${r.inclina.toFixed(4)},${(r.inclina*57.3).toFixed(1)},` +
-      `${r.forca.toFixed(3)},${r.balanco.toFixed(4)},${r.cego},` +
+      `${r.forca.toFixed(3)},${r.ajuda.toFixed(3)},${r.balanco.toFixed(4)},${r.cego},` +
       `${r.ext.toFixed(3)},${r.velCega.toFixed(3)},${r.cabeca.toFixed(3)},` +
       `${r.cabAng.toFixed(3)},${r.alcance.toFixed(2)},"${r.resultado}"`)).join('\n');
   try {
