@@ -471,7 +471,8 @@ for (let i = 0; i < 2; i++) {
   maos.push({ mao, activa: false, pos: new THREE.Vector3(),
               posAnt: new THREE.Vector3(), parado: 0, temAnt: false,
               agarra: false, fecho: null, velocidade: 0,
-              anguloAoAgarrar: 0, avancoAoAgarrar: 0, esferas: new Map() });
+              anguloAoAgarrar: 0, avancoAoAgarrar: 0, esferas: new Map(),
+              fechoMin: null, fechoMax: null, limiar: null });
 }
 
 // ── THE WHEEL ─────────────────────────────────────────────
@@ -534,18 +535,34 @@ function fixarFrente() {
 // bearings there was no way to give them back \u2014 which is why the throttle
 // sometimes stuck and no amount of stretching would clear it.
 const PONTAS = ['index-finger-tip', 'middle-finger-tip', 'ring-finger-tip', 'pinky-finger-tip'];
-const FECHA = 1.75, ABRE = 2.00;      // hysteresis, so a grip does not flicker
+// Sensible until the player's own range is known: a closed hand measures
+// about 0.9 on this scale and an open one about 2.0.
+const FECHA = 1.35, ABRE = 1.60;      // hysteresis, so a grip does not flicker
+
+// The scale is the wrist to the big knuckle of the middle finger — about
+// nine centimetres on an adult, and a length that does not change.
+//
+// It used to be measured to the middle-finger METACARPAL, which in the
+// WebXR hand sits at the base of the bone, almost on top of the wrist. A
+// scale of one or two centimetres made every ratio enormous, so no hand
+// ever counted as closed. Fingers tracked perfectly, and the wheel did
+// nothing — which is exactly what was reported.
+const JUNTAS_ESCALA = ['middle-finger-phalanx-proximal', 'index-finger-phalanx-proximal',
+                       'middle-finger-phalanx-intermediate'];
 
 function medirFecho(m) {
   const j = m.mao.joints;
   if (!j || !j['wrist']) return null;
-  const pulso = new THREE.Vector3(), meta = new THREE.Vector3(), ponta = new THREE.Vector3();
+  const pulso = new THREE.Vector3(), no = new THREE.Vector3(), ponta = new THREE.Vector3();
   j['wrist'].getWorldPosition(pulso);
-  const jm = j['middle-finger-metacarpal'] || j['middle-finger-phalanx-proximal'];
-  if (!jm) return null;
-  jm.getWorldPosition(meta);
-  const escala = pulso.distanceTo(meta);
-  if (escala < 0.02) return null;
+  let escala = 0;
+  for (const nome of JUNTAS_ESCALA) {
+    if (!j[nome]) continue;
+    j[nome].getWorldPosition(no);
+    const d = pulso.distanceTo(no);
+    if (d > escala) escala = d;
+  }
+  if (escala < 0.03) return null;
   let soma = 0, n = 0;
   for (const nome of PONTAS) {
     if (!j[nome]) continue;
@@ -554,6 +571,21 @@ function medirFecho(m) {
     n++;
   }
   return n ? soma / n : null;
+}
+
+// ── AND THEN STOP TRUSTING THE ABSOLUTE NUMBER ────────────
+// Whatever the ratio works out to on a given hand and a given runtime, an
+// open hand gives a bigger number than a closed one. So the thresholds are
+// learned from the player: the range seen so far, split part of the way
+// up. Fixed numbers were a guess about someone else's hand, and guessing
+// is what cost the last two builds.
+function limiarDe(m) {
+  if (m.fechoMin === null || m.fechoMax - m.fechoMin < 0.35) {
+    return { fecha: FECHA, abre: ABRE, aprendido: false };
+  }
+  const span = m.fechoMax - m.fechoMin;
+  return { fecha: m.fechoMin + span * 0.40,
+           abre:  m.fechoMin + span * 0.62, aprendido: true };
 }
 
 const cmd = { direcao: 0, acelerador: 0, agarrado: false, buzina: false };
@@ -600,9 +632,15 @@ function lerMaos(dt, t) {
     // gripping. A driver whose hands are seen but whose fingers are not
     // would otherwise be unable to drive at all, with nothing on screen to
     // explain why.
+    if (fecho !== null) {
+      m.fechoMin = m.fechoMin === null ? fecho : Math.min(m.fechoMin, fecho);
+      m.fechoMax = m.fechoMax === null ? fecho : Math.max(m.fechoMax, fecho);
+    }
+    const lim = limiarDe(m);
+    m.limiar = lim;
     const semDedos = fecho === null;
-    const fechada = semDedos ? (m.velocidade < 0.35) : (fecho < FECHA);
-    const aberta = semDedos ? (m.velocidade > 1.2) : (fecho > ABRE);
+    const fechada = semDedos ? (m.velocidade < 0.35) : (fecho < lim.fecha);
+    const aberta = semDedos ? (m.velocidade > 1.2) : (fecho > lim.abre);
 
     // The horn: a hand driven into the middle of the wheel. Not a pose,
     // a movement \u2014 so resting a hand near the boss does not fire.
@@ -975,13 +1013,57 @@ function desenharPainel() {
   ctx.font = '19px ui-monospace, Menlo, monospace';
   ctx.fillStyle = '#4a5468';
   maos.forEach((m, i) => {
+    const lim = m.limiar;
     const txt = !m.activa ? 'sem m\u00e3o'
-      : `${m.fecho === null ? 'dedos ?' : 'fecho ' + m.fecho.toFixed(2)}` +
-        `  ${m.pos.distanceTo(posVolante).toFixed(2)} m`;
+      : `${m.fecho === null ? 'dedos ?' : m.fecho.toFixed(2)}` +
+        `/${lim ? lim.fecha.toFixed(2) : '?'}${lim && lim.aprendido ? '*' : ''}` +
+        `  ${m.pos.distanceTo(posVolante).toFixed(2)}m`;
     ctx.fillText(`${nomes[i]}: ${txt}`, pxL - 28, 112 + i * 26);
   });
 
   tex.needsUpdate = true;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  AUTOMATIC LOG
+//  Starts with the race and sends itself to the server without being
+//  asked. Two rounds have now been lost to guessing at controls from a
+//  description; this exists so the next question is settled by data.
+// ═══════════════════════════════════════════════════════════
+const registo = [];
+const MAX_REG = 30000;
+let ultimoRegisto = 0, ultimoEnvio = 0;
+
+const CABECALHO = ['t_ms','estado','vel','direccao','acelerador','agarrado',
+                   'e_vista','e_fecho','e_min','e_max','e_lim','e_agarra','e_dist',
+                   'd_vista','d_fecho','d_min','d_max','d_lim','d_agarra','d_dist',
+                   'volante_x','volante_y','volante_z','cab_x','cab_y','cab_z','frente'];
+
+function anotar(t) {
+  if (registo.length >= MAX_REG) return;
+  const r3 = v => (v === null || v === undefined) ? '' : Math.round(v * 1000) / 1000;
+  const linha = [Math.round(t), estadoJogo, r3(karts[0].vel),
+                 r3(cmd.direcao), r3(cmd.acelerador), cmd.agarrado ? 1 : 0];
+  for (const m of maos) {
+    linha.push(m.activa ? 1 : 0, r3(m.fecho), r3(m.fechoMin), r3(m.fechoMax),
+               m.limiar ? r3(m.limiar.fecha) : '', m.agarra ? 1 : 0,
+               r3(m.activa ? m.pos.distanceTo(posVolante) : null));
+  }
+  linha.push(r3(posVolante.x), r3(posVolante.y), r3(posVolante.z),
+             r3(camPos.x), r3(camPos.y), r3(camPos.z), r3(frenteJogo));
+  registo.push(linha);
+}
+
+function paraCSV() {
+  return [CABECALHO.join(',')].concat(registo.map(l => l.join(','))).join('\n');
+}
+
+async function enviarRegisto(motivo) {
+  if (registo.length < 5) return;
+  try {
+    await fetch(new URL('/callog?label=kart-' + motivo, location.origin).href,
+      { method: 'POST', headers: { 'Content-Type': 'text/csv' }, body: paraCSV() });
+  } catch (e) { /* no server here; the session goes on regardless */ }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1080,6 +1162,13 @@ function frame() {
   contaPainel += dt;
   if (contaPainel > 0.08) { contaPainel = 0; desenharPainel(); }
 
+  // Fifteen samples a second is enough to see a grip come and go, and
+  // little enough that a long race still fits in a few megabytes.
+  if (t - ultimoRegisto > 66) { ultimoRegisto = t; anotar(t); }
+  // Flushed periodically as well as at the end: a session that ends badly
+  // is exactly the one worth having a record of.
+  if (t - ultimoEnvio > 25000) { ultimoEnvio = t; enviarRegisto('parcial'); }
+
   render.render(cena, camara);
 }
 
@@ -1106,12 +1195,16 @@ entrarBt.addEventListener('click', async () => {
     render.xr.setReferenceSpaceType('local-floor');
     await render.xr.setSession(sessao);
     t0 = performance.now(); ultimo = t0;
+    registo.length = 0; ultimoRegisto = 0; ultimoEnvio = 0;
     porNaGrelha();
     estadoJogo = 'contagem'; contagem = 4.0;
     render.setAnimationLoop(frame);
     estadoEl.textContent = 'A correr.';
     sessao.addEventListener('end', () => {
       render.setAnimationLoop(null);
+      enviarRegisto('fim').then(() => {
+        estadoEl.textContent += ` Registo guardado — ${location.origin}/logs`;
+      });
       entrarBt.disabled = false;
       entrarBt.textContent = 'Correr outra vez';
       estadoEl.textContent =
